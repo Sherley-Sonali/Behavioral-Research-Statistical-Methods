@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MST × Event Boundaries — Analysis Report</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;1,300&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F8F7F4;
+    --ink: #1A1916;
+    --muted: #6B6860;
+    --rule: #D4D1CA;
+    --accent: #1F3ECB;
+    --red: #C0392B;
+    --blue: #2563EB;
+    --gray: #6B7280;
+    --green: #059669;
+    --highlight: #EEF2FF;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 15px; scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 300;
+    line-height: 1.7;
+    padding: 0;
+  }
+
+  /* NAV */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: var(--bg);
+    border-bottom: 1px solid var(--rule);
+    padding: 0 3rem;
+    height: 52px;
+    display: flex; align-items: center; gap: 2rem;
+  }
+  nav .logo {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem; font-weight: 500; letter-spacing: 0.05em;
+    color: var(--accent); text-decoration: none; margin-right: auto;
+  }
+  nav a {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem; color: var(--muted); text-decoration: none;
+    letter-spacing: 0.04em; transition: color 0.15s;
+  }
+  nav a:hover { color: var(--ink); }
+
+  /* LAYOUT */
+  .wrapper { max-width: 860px; margin: 0 auto; padding: 100px 3rem 80px; }
+
+  /* HEADER */
+  header { padding: 3rem 0 3rem; border-bottom: 1px solid var(--rule); margin-bottom: 3rem; }
+  header .tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 1.2rem;
+  }
+  header h1 {
+    font-size: 2.2rem; font-weight: 300; line-height: 1.25;
+    letter-spacing: -0.02em; margin-bottom: 1rem; max-width: 680px;
+  }
+  header h1 em { font-style: italic; color: var(--accent); }
+  .meta-row {
+    display: flex; gap: 2.5rem; margin-top: 1.5rem;
+  }
+  .meta-item { display: flex; flex-direction: column; gap: 0.15rem; }
+  .meta-item .key {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.65rem;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+  }
+  .meta-item .val { font-size: 0.88rem; font-weight: 400; }
+
+  /* SECTIONS */
+  section { margin-bottom: 3.5rem; }
+  h2 {
+    font-size: 0.65rem; font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted);
+    margin-bottom: 1.2rem; padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+    display: flex; align-items: center; gap: 0.8rem;
+  }
+  h2 .num {
+    font-size: 0.6rem; color: var(--accent);
+  }
+  h3 {
+    font-size: 1rem; font-weight: 500; margin: 1.8rem 0 0.6rem;
+  }
+  p { margin-bottom: 0.9rem; font-size: 0.92rem; color: #2A2925; }
+
+  /* CODE / FORMULA */
+  code {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;
+    background: #EEECEA; padding: 0.1em 0.35em; border-radius: 2px;
+    color: var(--ink);
+  }
+  .formula-block {
+    background: #F0EEF9; border-left: 3px solid var(--accent);
+    padding: 1rem 1.2rem; margin: 1rem 0; font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.83rem; line-height: 1.6;
+  }
+  .formula-block .fname { font-weight: 500; color: var(--accent); }
+
+  pre {
+    background: #1A1916; color: #E8E6E1;
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem;
+    line-height: 1.6; padding: 1.4rem 1.6rem;
+    border-radius: 3px; overflow-x: auto; margin: 1rem 0;
+  }
+  pre .kw  { color: #7DD3FC; }
+  pre .fn  { color: #86EFAC; }
+  pre .str { color: #FCA5A5; }
+  pre .cmt { color: #6B7280; font-style: italic; }
+  pre .num { color: #FCD34D; }
+
+  /* TABLE */
+  .tbl-wrap { overflow-x: auto; margin: 1rem 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+  th {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.65rem;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    text-align: left; padding: 0.55rem 0.8rem;
+    border-bottom: 2px solid var(--ink); color: var(--muted);
+  }
+  td { padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--highlight); }
+  td.mono { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; }
+  td.note { font-size: 0.78rem; color: var(--muted); font-style: italic; }
+
+  /* HYPOTHESIS CARDS */
+  .hyp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+  .hyp-card {
+    border: 1px solid var(--rule); padding: 1rem 1.1rem;
+    position: relative;
+  }
+  .hyp-card .hid {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.65rem;
+    letter-spacing: 0.1em; color: var(--accent); margin-bottom: 0.4rem;
+    text-transform: uppercase;
+  }
+  .hyp-card .htitle { font-weight: 500; font-size: 0.88rem; margin-bottom: 0.4rem; }
+  .hyp-card p { font-size: 0.82rem; color: var(--muted); margin: 0; }
+  .hyp-card.dir-down .hid { color: var(--red); }
+  .hyp-card.dir-up   .hid { color: var(--blue); }
+
+  /* STEP LIST */
+  .steps { counter-reset: step; list-style: none; margin: 0.5rem 0; }
+  .steps li {
+    counter-increment: step;
+    display: flex; gap: 1rem; align-items: flex-start;
+    margin-bottom: 0.7rem; font-size: 0.88rem;
+  }
+  .steps li::before {
+    content: counter(step, decimal-leading-zero);
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem;
+    color: var(--accent); min-width: 24px; padding-top: 0.15rem;
+  }
+
+  /* BULLET */
+  ul.plain { list-style: none; padding: 0; }
+  ul.plain li {
+    padding: 0.35rem 0; font-size: 0.88rem; padding-left: 1rem;
+    border-bottom: 1px solid var(--rule); position: relative;
+  }
+  ul.plain li::before {
+    content: "—"; position: absolute; left: 0;
+    color: var(--muted); font-family: 'IBM Plex Mono', monospace;
+  }
+  ul.plain li:last-child { border-bottom: none; }
+
+  /* ALPHA TABLE */
+  .alpha-row { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--rule); }
+  .alpha-row:last-child { border-bottom: none; }
+  .alpha-row .akey { font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem; min-width: 200px; }
+  .alpha-row .aval { font-size: 0.82rem; color: var(--muted); }
+
+  /* EXPECTED RESULTS */
+  .result-row {
+    display: grid; grid-template-columns: 160px 1fr;
+    gap: 0.5rem 1.5rem; padding: 0.8rem 0;
+    border-bottom: 1px solid var(--rule); font-size: 0.85rem;
+    align-items: start;
+  }
+  .result-row:last-child { border-bottom: none; }
+  .result-row .rlabel {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem;
+    color: var(--accent); padding-top: 0.15rem; text-transform: uppercase;
+  }
+
+  /* REFS */
+  ol.refs { padding-left: 1.5rem; }
+  ol.refs li { font-size: 0.82rem; margin-bottom: 0.6rem; color: var(--muted); line-height: 1.5; }
+  ol.refs li span { color: var(--ink); }
+
+  /* TAG INLINE */
+  .tag-inline {
+    display: inline-block; font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 0.1em 0.5em; border-radius: 2px;
+    background: var(--highlight); color: var(--accent);
+    vertical-align: middle; margin-left: 0.3rem;
+  }
+  .tag-red   { background: #FEF2F2; color: var(--red); }
+  .tag-green { background: #ECFDF5; color: var(--green); }
+
+  /* DIVIDER */
+  hr { border: none; border-top: 1px solid var(--rule); margin: 2.5rem 0; }
+
+  /* FOOTER */
+  footer {
+    border-top: 1px solid var(--rule); margin-top: 4rem;
+    padding: 2rem 3rem; max-width: 860px; margin-left: auto; margin-right: auto;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  footer .fl {
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem;
+    color: var(--muted); letter-spacing: 0.06em;
+  }
+
+  @media (max-width: 640px) {
+    .wrapper { padding: 80px 1.2rem 60px; }
+    nav { padding: 0 1.2rem; }
+    nav a:not(.logo) { display: none; }
+    .hyp-grid { grid-template-columns: 1fr; }
+    .meta-row { flex-wrap: wrap; gap: 1.2rem; }
+    footer { flex-direction: column; gap: 0.5rem; text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="#" class="logo">MST × EVENT MEMORY</a>
+  <a href="#intro">Intro</a>
+  <a href="#hypotheses">Hypotheses</a>
+  <a href="#methods">Methods</a>
+  <a href="#results">Results</a>
+  <a href="#code">Code</a>
+  <a href="#refs">References</a>
+</nav>
+
+<div class="wrapper">
+
+  <header id="intro">
+    <div class="tag">BRSM 2026 — Preliminary Analysis Report</div>
+    <h1>Mnemonic Similarity Task &amp; <em>Event Boundary Effects</em> on Episodic Memory</h1>
+    <div class="meta-row">
+      <div class="meta-item"><span class="key">Total N</span><span class="val">~160 participants</span></div>
+      <div class="meta-item"><span class="key">Conditions</span><span class="val">Item-only · Task-only · Both</span></div>
+      <div class="meta-item"><span class="key">Replicates</span><span class="val">Morse et al., 2023</span></div>
+      <div class="meta-item"><span class="key">Date</span><span class="val">March 2026</span></div>
+    </div>
+  </header>
+
+  <!-- 1. BACKGROUND -->
+  <section>
+    <h2><span class="num">01</span> Background</h2>
+    <p>Episodic memory depends on hippocampal <strong>pattern separation</strong> — the ability to orthogonalise overlapping input representations into distinct neural codes, mediated by the dentate gyrus (DG) and CA3 (Yassa &amp; Stark, 2011). The <strong>Mnemonic Similarity Task (MST)</strong> provides a validated behavioural measure of this capacity: participants encode everyday object and scene images, then classify test items as <em>Old</em>, <em>Similar</em>, or <em>New</em> — including high-interference lure images at five graded similarity levels (Stark et al., 2013).</p>
+    <p><strong>Event Segmentation Theory</strong> (Zacks et al., 2007) proposes that experience is chunked into discrete events at <em>event boundaries</em> — moments of contextual change where working memory updates its situational model. Morse et al. (2023) showed these boundaries <em>directionally</em> influence item memory: post-boundary items show recognition deficits; pre-boundary items show enhanced mnemonic discrimination.</p>
+    <p>The present study replicates and extends Morse et al. across three between-subjects conditions, with 40 encoding events × 7 items each, a modified orienting task ("Will it fit in a shoebox?"), and explicit lure-bin tracking (bins 1–5).</p>
+  </section>
+
+  <!-- 2. DATASET -->
+  <section>
+    <h2><span class="num">02</span> Dataset</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Condition</th><th>Folder</th><th>N</th><th>Files per Participant</th></tr></thead>
+        <tbody>
+          <tr><td>Item-only</td><td class="mono">item_only/item_only_data/</td><td>~56</td><td>task CSV + test CSV</td></tr>
+          <tr><td>Both item + task</td><td class="mono">Both_item_task/both_data/</td><td>~51</td><td>task CSV + test CSV</td></tr>
+          <tr><td>Task-only</td><td class="mono">task_only/task_only_data/</td><td>~53</td><td>task CSV + test CSV</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Trial Classification from Filename</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Filename Pattern</th><th>Trial Type</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Objects/XXXa.jpg</td><td>Target</td></tr>
+          <tr><td class="mono">Objects/XXXb.jpg</td><td>Lure</td></tr>
+          <tr><td class="mono">foil/XXX.jpg</td><td>Foil</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Event Position</h3>
+    <p>Within each 7-item encoding event: serial position 1 = <strong>post-boundary</strong>; position 7 = <strong>pre-boundary</strong>; positions 2–6 = <strong>mid-event</strong>. Position is inferred from the order of <code>image_path</code> rows in the task CSV.</p>
+
+    <h3>Key Metrics</h3>
+    <div class="formula-block">
+      <span class="fname">REC</span> = P("old" | Target) − P("old" | Foil)<br>
+      <span style="color:var(--muted);font-size:0.75rem;">Recognition Memory Index — bias-corrected hit rate</span>
+    </div>
+    <div class="formula-block">
+      <span class="fname">LDI</span> = P("similar" | Lure) − P("similar" | Foil)<br>
+      <span style="color:var(--muted);font-size:0.75rem;">Lure Discrimination Index — hippocampal pattern separation proxy</span>
+    </div>
+  </section>
+
+  <!-- 3. HYPOTHESES -->
+  <section id="hypotheses">
+    <h2><span class="num">03</span> Research Hypotheses</h2>
+    <div class="hyp-grid">
+      <div class="hyp-card dir-down">
+        <div class="hid">H1 — Post-boundary ↓ REC</div>
+        <div class="htitle">Recognition Deficit</div>
+        <p>Post-boundary target REC will be significantly below zero and below mid-event REC. Event transitions reset the encoding context.</p>
+      </div>
+      <div class="hyp-card dir-up">
+        <div class="hid">H2 — Pre-boundary ↑ LDI</div>
+        <div class="htitle">Discrimination Enhancement</div>
+        <p>Pre-boundary LDI will exceed post-boundary LDI. Heightened attention at event closure strengthens high-fidelity encoding.</p>
+      </div>
+      <div class="hyp-card dir-down">
+        <div class="hid">H3 — Lure Bin Gradient</div>
+        <div class="htitle">Monotonic LDI decrease</div>
+        <p>LDI decreases monotonically from Bin 1 (most similar) to Bin 5 (least similar), reflecting graded pattern separation demand.</p>
+      </div>
+      <div class="hyp-card">
+        <div class="hid">H4 — Condition Moderation</div>
+        <div class="htitle">Group × Position Interaction</div>
+        <p>Boundary effects on REC and LDI differ across conditions; "both" condition expected to show the strongest effects.</p>
+      </div>
+    </div>
+    <p style="margin-top:1rem;font-size:0.82rem;color:var(--muted);">Exploratory: RT elevation at post-boundary; object vs. scene stimulus differences; LDI bin × position interaction.</p>
+  </section>
+
+  <!-- 4. METHODS -->
+  <section id="methods">
+    <h2><span class="num">04</span> Methods</h2>
+
+    <h3>Preprocessing Pipeline</h3>
+    <ol class="steps">
+      <li>Load task CSV → extract <code>image_path</code> order → assign pre/mid/post position (7-item window).</li>
+      <li>Unify RT: use <code>key_resp_9.rt</code> if available; else total RT = 3 + <code>key_resp_8.rt</code>.</li>
+      <li>Load test CSV → classify trials (target/lure/foil by filename suffix) → map response keys to old/similar/new.</li>
+      <li>Cross-reference <code>Set6 bins.txt</code> / <code>SetScC bins.txt</code> to assign lure bins 1–5.</li>
+      <li>For item_only: recalculate encoding accuracy using <code>scenes_mapping.txt</code> to correct forced-choice errors.</li>
+      <li>Compute foil baseline rates → calculate per-participant REC and LDI by position and by lure bin.</li>
+    </ol>
+
+    <h3>Statistical Tests</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Test</th><th>Hypothesis</th><th>Correction</th></tr></thead>
+        <tbody>
+          <tr><td>One-sample t vs 0 (per position)</td><td>H1, H2</td><td>Holm-Bonferroni</td></tr>
+          <tr><td>Paired t (pre vs post)</td><td>H1, H2</td><td>Holm-Bonferroni</td></tr>
+          <tr><td>Repeated-measures ANOVA (3 positions)</td><td>H1, H2</td><td>Holm post-hoc</td></tr>
+          <tr><td>Repeated-measures ANOVA (5 bins) + linear trend</td><td>H3</td><td>BH FDR q=0.05</td></tr>
+          <tr><td>Mixed ANOVA: 3 Condition × 3 Position</td><td>H4</td><td>Bonferroni (2 DVs)</td></tr>
+          <tr><td>RT: one-way RM ANOVA + post-hoc</td><td>Exploratory</td><td>Uncorrected, labelled</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Multiple Comparisons Policy</h3>
+    <div>
+      <div class="alpha-row"><span class="akey">Confirmatory (H1–H4)</span><span class="aval">Bonferroni: α = 0.05 / 4 = <strong>0.0125</strong></span></div>
+      <div class="alpha-row"><span class="akey">Pairwise post-hoc</span><span class="aval">Holm-Bonferroni stepwise correction</span></div>
+      <div class="alpha-row"><span class="akey">Lure bin family (5 tests)</span><span class="aval">Benjamini-Hochberg FDR, q = 0.05</span></div>
+      <div class="alpha-row"><span class="akey">Exploratory analyses</span><span class="aval">α = 0.05, uncorrected — clearly labelled as exploratory</span></div>
+    </div>
+    <p style="margin-top:0.8rem;font-size:0.82rem;color:var(--muted);">Effect sizes reported throughout: Cohen's d for t-tests (d = t/√n); partial η² for ANOVAs. 95% CIs on all primary comparisons.</p>
+  </section>
+
+  <!-- 5. EXPECTED RESULTS -->
+  <section id="results">
+    <h2><span class="num">05</span> Anticipated Results</h2>
+
+    <div>
+      <div class="result-row">
+        <span class="rlabel">H1 · REC Post</span>
+        <span>Post-boundary REC expected significantly below zero: one-sample t(~159) &lt; −2.0, p &lt; 0.0125. Paired comparison post vs pre: Cohen's d ≈ −0.30 to −0.45.</span>
+      </div>
+      <div class="result-row">
+        <span class="rlabel">H2 · LDI Pre</span>
+        <span>Pre-boundary LDI significantly above zero: t(~159) &gt; 2.0, p &lt; 0.0125. Pre &gt; Post LDI: d ≈ 0.25–0.40.</span>
+      </div>
+      <div class="result-row">
+        <span class="rlabel">H3 · Bin gradient</span>
+        <span>ANOVA across bins 1–5: F(4, ~636) &gt; 3.5, p &lt; 0.01, η² &gt; 0.05. Linear trend contrast significant.</span>
+      </div>
+      <div class="result-row">
+        <span class="rlabel">H4 · Condition</span>
+        <span>Condition × Position interaction in mixed ANOVA tests whether boundary effects generalise. "Both" condition expected to show largest d for pre−post REC difference.</span>
+      </div>
+      <div class="result-row">
+        <span class="rlabel">Exploratory · RT</span>
+        <span>Median RT elevated post-boundary relative to pre-boundary. Aligns with EST predictions of increased context-updating demands at boundaries.</span>
+      </div>
+    </div>
+
+    <h3>Planned Figures</h3>
+    <ul class="plain">
+      <li><strong>Fig 1</strong> — REC by event position (bar + strip, per condition; one-sample significance markers)</li>
+      <li><strong>Fig 2</strong> — LDI by event position (violin + box, per condition)</li>
+      <li><strong>Fig 3</strong> — LDI by lure bin 1–5 (line graph, three conditions overlaid)</li>
+      <li><strong>Fig 4</strong> — Median RT by event position (grouped bar)</li>
+      <li><strong>Fig 5</strong> — Pre–Post difference in REC and LDI across conditions (condition-comparison bars)</li>
+    </ul>
+    <p style="font-size:0.8rem;color:var(--muted);margin-top:0.8rem;">Supplementary: Objects vs. Scenes breakdown replicating Morse et al. Supp. Fig. 1–2.</p>
+  </section>
+
+  <!-- 6. CODE GUIDE -->
+  <section id="code">
+    <h2><span class="num">06</span> Analysis Code</h2>
+    <p>Run <code>mst_analysis.py</code> from the folder containing <code>item_only/</code>, <code>Both_item_task/</code>, and <code>task_only/</code>.</p>
+
+    <pre><span class="cmt"># Terminal</span>
+<span class="kw">cd</span> /path/to/MST_Data
+<span class="fn">python</span> mst_analysis.py</pre>
+
+    <p>Outputs written to the same directory:</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Output File</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">mst_results.csv</td><td>Per-participant REC, LDI, RT for all positions and lure bins</td></tr>
+          <tr><td class="mono">mst_summary.txt</td><td>Full statistical output: t-tests, ANOVA, effect sizes, corrections</td></tr>
+          <tr><td class="mono">figures/fig1_REC_by_position.png</td><td>Figure 1 — REC × position</td></tr>
+          <tr><td class="mono">figures/fig2_LDI_by_position.png</td><td>Figure 2 — LDI × position</td></tr>
+          <tr><td class="mono">figures/fig3_LDI_lure_bins.png</td><td>Figure 3 — LDI × lure bin</td></tr>
+          <tr><td class="mono">figures/fig4_RT_by_position.png</td><td>Figure 4 — RT × position</td></tr>
+          <tr><td class="mono">figures/fig5_condition_comparison.png</td><td>Figure 5 — Condition comparison</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Pipeline at a Glance</h3>
+    <pre><span class="cmt"># Core computation loop (simplified)</span>
+<span class="kw">for</span> each participant:
+    task_df = load_task_csv(...)
+    test_df = load_test_csv(...)
+
+    position_map = get_position_map(task_df)   <span class="cmt"># 7-item event window</span>
+    bins_map     = load_bins(folder)            <span class="cmt"># Set6 bins.txt, SetScC bins.txt</span>
+
+    foil_old  = P("old"     | foil trials)
+    foil_sim  = P("similar" | foil trials)
+
+    <span class="kw">for</span> pos <span class="kw">in</span> [<span class="str">"pre"</span>, <span class="str">"mid"</span>, <span class="str">"post"</span>]:
+        REC[pos] = P("old"     | targets[pos]) - foil_old
+        LDI[pos] = P("similar" | lures[pos])   - foil_sim
+
+    <span class="kw">for</span> b <span class="kw">in</span> <span class="fn">range</span>(<span class="num">1</span>, <span class="num">6</span>):
+        LDI_bin[b] = P("similar" | lures[bin==b]) - foil_sim
+
+<span class="cmt"># Statistics</span>
+<span class="fn">one_sample_t</span>(REC_post)         <span class="cmt"># H1: is it < 0?</span>
+<span class="fn">one_sample_t</span>(LDI_pre)          <span class="cmt"># H2: is it > 0?</span>
+<span class="fn">paired_t</span>(LDI_pre, LDI_post)   <span class="cmt"># H2: pre > post?</span>
+<span class="fn">anova</span>(LDI_bin1 … LDI_bin5)    <span class="cmt"># H3: bin gradient?</span>
+<span class="fn">mixed_anova</span>(condition × pos)   <span class="cmt"># H4: moderation?</span></pre>
+
+    <h3>Required Libraries</h3>
+    <pre><span class="fn">pip</span> install pandas numpy scipy matplotlib seaborn</pre>
+  </section>
+
+  <hr>
+
+  <!-- 7. CONCLUSION -->
+  <section>
+    <h2><span class="num">07</span> Conclusion &amp; Next Steps</h2>
+    <p>This study provides a three-condition replication of Morse et al. (2023) with a substantially larger N (~160), five explicit lure-bin levels, and a novel orienting task. The LDI metric's sensitivity to lure similarity gradients makes it particularly well-suited to detecting subtle encoding precision differences across event positions.</p>
+    <ul class="plain">
+      <li>Complete preprocessing and run <code>mst_analysis.py</code> on full dataset.</li>
+      <li>Pre-register confirmatory hypotheses on OSF before examining group-level results.</li>
+      <li>Investigate individual differences: encoding task accuracy as a moderator of boundary effects.</li>
+      <li>Supplement with fMRI/EEG to link behavioural LDI to DG/CA3 BOLD activity at boundaries.</li>
+      <li>Extend to aging/MCI populations where hippocampal pattern separation is compromised.</li>
+    </ul>
+  </section>
+
+  <!-- 8. REFERENCES -->
+  <section id="refs">
+    <h2><span class="num">08</span> References</h2>
+    <ol class="refs">
+      <li><span>Morse, S. J., Neta, M., &amp; Wammes, J. D. (2023).</span> Event boundaries directionally influence item-level recognition memory. <em>Journal of Experimental Psychology: General.</em></li>
+      <li><span>Stark, S. M., Yassa, M. A., Lacy, J. W., &amp; Stark, C. E. L. (2013).</span> A task to assess behavioral pattern separation (BPS) in humans. <em>Neuropsychologia, 51</em>(12), 2442–2449.</li>
+      <li><span>Yassa, M. A., &amp; Stark, C. E. L. (2011).</span> Pattern separation in the hippocampus. <em>Trends in Neurosciences, 34</em>(10), 515–525.</li>
+      <li><span>Zacks, J. M., Speer, N. K., Swallow, K. M., Braver, T. S., &amp; Reynolds, J. R. (2007).</span> Event perception: A mind-brain perspective. <em>Psychological Bulletin, 133</em>(2), 273–293.</li>
+      <li><span>Zacks, J. M., &amp; Swallow, K. M. (2007).</span> Event segmentation. <em>Current Directions in Psychological Science, 16</em>(2), 80–84.</li>
+      <li><span>Squire, L. R. (1992).</span> Memory and the hippocampus: A synthesis from findings with rats, monkeys, and humans. <em>Psychological Review, 99</em>(2), 195–231.</li>
+    </ol>
+  </section>
+
+</div>
+
+<footer>
+  <span class="fl">MST × EVENT MEMORY — BRSM 2026</span>
+  <span class="fl">mst_analysis.py · mst_results.csv · figures/</span>
+</footer>
+
+</body>
+</html>
