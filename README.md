@@ -7,10 +7,8 @@
 4. [Methods](#4-methods)
 5. [Results](#5-results)
 6. [Discussion](#6-discussion)
-7. [Conclusions & Future Directions](#7-conclusions--future-directions)
-8. [Technical Reference](#8-technical-reference)
-9. [Reproducibility](#9-reproducibility)
-10. [References](#10-references)
+7. [Technical Reference](#7-technical-reference)
+8. [Reproducibility](#8-reproducibility)
 
 ---
 
