@@ -1,6 +1,5 @@
 """
 MST Analysis Pipeline  (updated to match actual data structure)
-================================================================
 Run from the folder containing:
   Both_item_task/   item_only/   task_only/
 
@@ -43,9 +42,7 @@ CONDITIONS = {
     "both_item_task":  {"folder": "Both_item_task",   "data_subdir": "both_data"},
 }
 
-# ─────────────────────────────────────────────
 # 1. LOAD BINS
-# ─────────────────────────────────────────────
 def load_bins(folder):
     """
     Return two dicts:  obj_bins, scene_bins
@@ -94,9 +91,7 @@ def is_scene(image_path):
     return re.search(r"[Ss]cenes", str(image_path)) is not None
 
 
-# ─────────────────────────────────────────────
 # 2. TRIAL CLASSIFICATION (path-safe)
-# ─────────────────────────────────────────────
 def classify_trial(image_path):
     """Classify as foil / lure / target.  Handles backslash Windows paths."""
     p = str(image_path).replace("\\", "/")
@@ -111,9 +106,7 @@ def classify_trial(image_path):
     return "unknown"
 
 
-# ─────────────────────────────────────────────
 # 3. LOAD TASK (ENCODING) CSV  (unchanged logic)
-# ─────────────────────────────────────────────
 def load_task_csv(fpath):
     df = pd.read_csv(fpath)
     df.columns = df.columns.str.strip()
@@ -139,9 +132,7 @@ def get_encoding_rt(task_df):
     return rt_map
 
 
-# ─────────────────────────────────────────────
 # 4. LOAD TEST CSV
-# ─────────────────────────────────────────────
 def load_test_csv(fpath):
     df = pd.read_csv(fpath)
     df.columns = df.columns.str.strip()
@@ -178,9 +169,7 @@ def load_test_csv(fpath):
     return df
 
 
-# ─────────────────────────────────────────────
 # 5. COMPUTE REC & LDI
-# ─────────────────────────────────────────────
 RESPONSE_MAP = {
     "o": "old", "s": "similar", "n": "new",
     # legacy key mappings kept for safety
@@ -217,7 +206,7 @@ def compute_metrics(test_df, obj_bins, scene_bins):
 
     metrics = {"foil_old_rate": foil_old_rate, "foil_sim_rate": foil_sim_rate}
 
-    # ── By event position ──────────────────────────────────────────────
+    # By event position
     for pos in ["pre", "mid", "post"]:
         tgt = test_df[(test_df["trial_type"] == "target") & (test_df["position"] == pos)]
         lur = test_df[(test_df["trial_type"] == "lure")   & (test_df["position"] == pos)]
@@ -230,7 +219,7 @@ def compute_metrics(test_df, obj_bins, scene_bins):
         ]["rt"]
         metrics[f"RT_{pos}"] = tgt_rt.median() if len(tgt_rt) > 0 else np.nan
 
-    # ── By lure bin ─────────────────────────────────────────────────────
+    # By lure bin
     for b in range(1, 6):
         lur = test_df[(test_df["trial_type"] == "lure") & (test_df["lure_bin"] == b)]
         sim = (lur["resp_norm"] == "similar").mean() if len(lur) > 0 else np.nan
@@ -238,10 +227,7 @@ def compute_metrics(test_df, obj_bins, scene_bins):
 
     return metrics
 
-
-# ─────────────────────────────────────────────
 # 6. PROCESS ALL PARTICIPANTS
-# ─────────────────────────────────────────────
 def find_participant_pairs(data_dir):
     """
     Return list of (pid, task_path_or_None, test_path).
@@ -300,9 +286,7 @@ def process_condition(cond_name, cond_info):
     return pd.DataFrame(records)
 
 
-# ─────────────────────────────────────────────
 # 7. STATISTICS
-# ─────────────────────────────────────────────
 def one_sample_t(values, label=""):
     v = values.dropna()
     if len(v) < 3:
@@ -324,9 +308,7 @@ def paired_t(a, b, label=""):
             "sem_diff": diff.sem(), "t": t, "p": p, "d": d}
 
 
-# ─────────────────────────────────────────────
 # 8. FIGURES
-# ─────────────────────────────────────────────
 COLORS = {
     "pre":  "#2563EB",
     "mid":  "#6B7280",
@@ -497,9 +479,7 @@ def fig5_condition_comparison(df, save_path):
     print(f"  Saved: {save_path}")
 
 
-# ─────────────────────────────────────────────
 # 9. STATS REPORT
-# ─────────────────────────────────────────────
 def run_all_stats(df, out_lines):
     W = out_lines.append
 
@@ -595,11 +575,9 @@ def run_all_stats(df, out_lines):
     W("=" * 60)
 
 
-# ─────────────────────────────────────────────
 # 10. MAIN
-# ─────────────────────────────────────────────
 def main():
-    print("\n=== MST Analysis Pipeline ===\n")
+    print("\nMST Analysis Pipeline\n")
     all_dfs = []
     for cond_name, cond_info in CONDITIONS.items():
         print(f"Processing: {cond_name}")
