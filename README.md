@@ -39,28 +39,6 @@ This project presents a comprehensive analysis of Mnemonic Similarity Task (MST)
 | FDR q-value | .05 |
 | Significant comparisons | 0 / 3 |
 
-### Generated Output Files
-
-| File | Description |
-|------|-------------|
-| `mst_analysis.py` | Complete Python analysis pipeline (reproducible) |
-| `MST_ANALYSIS_REPORT.md` | Full detailed markdown report |
-| `MST_Analysis_Visualizations.png` | Comprehensive figure (6 subplots, 300 dpi) |
-| `MST_Summary_Statistics.png` | Summary bar plots (300 dpi) |
-
-### Data Structure
-
-```
-/MST_Data/
-├── Both_item_task/both_data/      — 51 test files
-├── item_only/item_only_data/      — 56 test files
-├── task_only/task_only_data/      — 53 test files
-├── mst_analysis.py
-├── MST_ANALYSIS_REPORT.md
-├── MST_Analysis_Visualizations.png
-├── MST_Summary_Statistics.png
-└── README.md
-```
 
 ---
 
@@ -291,44 +269,9 @@ For reference: d = 0.2 (small), 0.5 (medium), 0.8 (large).
 
 ---
 
-## 7. Conclusions & Future Directions
+## 7. Technical Reference
 
-### 7.1 Recommended Next Steps
-
-**Neuroimaging Integration**
-- fMRI to identify neural correlates of condition differences
-- EEG for temporal dynamics of memory processes
-- Relate behavioral patterns to hippocampal activation
-
-**Expanded Methodology**
-- Vary stimulus difficulty systematically
-- Include additional measures: confidence ratings, eye tracking
-- Implement adaptive difficulty procedures
-- Conduct signal detection theory analysis (d', LDI by trial type)
-
-**Population Studies**
-- Developmental trajectory analyses
-- Age-related changes in task sensitivity
-- Clinical populations with known memory deficits (MCI, Alzheimer's, depression)
-
-**Computational Approaches**
-- Bayesian hierarchical modeling for individual differences
-- Mixed-effects models accounting for participant random effects
-- Process models to decompose underlying memory mechanisms
-
-### 7.2 Clinical Outlook
-
-The MST continues to show promise as:
-- An early biomarker for neurodegenerative disease progression
-- An endpoint for intervention studies
-- A tool for tracking treatment response
-- A sensitive assessment of subtle hippocampal dysfunction
-
----
-
-## 8. Technical Reference
-
-### 8.1 Main Analysis Class
+### 7.1 Main Analysis Class
 
 ```python
 class MSTDataAnalysis:
@@ -344,7 +287,7 @@ class MSTDataAnalysis:
     """
 ```
 
-### 8.2 Primary Methods
+### 7.2 Primary Methods
 
 | Method | Purpose | Output |
 |--------|---------|--------|
@@ -366,19 +309,8 @@ analysis.create_visualizations()
 analysis.generate_report()
 ```
 
-### 8.3 Filename Parsing
 
-**Pattern:** `XXXXX_MST_[task|test]_YYYY-MM-DD_HHhMM.SS.mmm.csv`
-
-```python
-# Example: 00015_MST_task_2025-11-08_11h36.39.538.csv
-parts = filename.replace('.csv', '').split('_')
-participant  = parts[0]      # '00015'
-session_type = parts[2]      # 'task' or 'test'
-timestamp    = '_'.join(parts[3:])  # '2025-11-08_11h36.39.538'
-```
-
-### 8.4 Data Filtering
+### 7.3 Data Filtering
 
 ```python
 # RT filtering: convert seconds → ms, filter to valid range
@@ -387,7 +319,7 @@ rts = rts[(rts >= 0.2) & (rts <= 5.0)]  # 200–5000 ms
 mean_rt = rts.mean() * 1000
 ```
 
-### 8.5 Statistical Implementation
+### 7.4 Statistical Implementation
 
 **Bonferroni correction:**
 ```python
@@ -412,11 +344,11 @@ d = (M₁ − M₂) / SD_pooled
 where SD_pooled = √[((n₁−1)·SD₁² + (n₂−1)·SD₂²) / (n₁+n₂−2)]
 ```
 
-### 8.6 Recommended Result Reporting Format
+### 7.5 Recommended Result Reporting Format
 
 > Memory accuracy did not differ significantly across task conditions, F(2,157) = 0.10, p = .905. Pairwise comparisons using Bonferroni correction (α = .0167) revealed no significant differences between any condition pairs. Effect sizes were small (largest d = 0.087), suggesting minimal practical differences.
 
-### 8.7 Troubleshooting
+### 7.6 Troubleshooting
 
 | Issue | Error | Solution |
 |-------|-------|---------|
@@ -424,7 +356,7 @@ where SD_pooled = √[((n₁−1)·SD₁² + (n₂−1)·SD₂²) / (n₁+n₂�
 | Inconsistent data types | "Could not convert string to float" | `pd.to_numeric(df[col], errors='coerce')` |
 | Memory errors on large files | `MemoryError` | Use `pd.read_csv(filepath, chunksize=10000)` |
 
-## 9. Reproducibility
+## 8. Reproducibility
 
 ### System Requirements
 
