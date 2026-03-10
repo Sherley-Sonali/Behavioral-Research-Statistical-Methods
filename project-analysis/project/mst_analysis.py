@@ -1,11 +1,8 @@
 """
 Mnemonic Similarity Task (MST) Data Analysis Pipeline
-======================================================
+
 This script analyzes data from a modified MST experiment examining pattern separation
 and recognition memory across different task conditions (items, task, or both).
-
-Author: Research Team
-Date: 2026
 """
 
 import os
@@ -918,16 +915,13 @@ def main():
     # Generate report
     analysis.generate_report()
     
-    print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE!")
-    print("=" * 70)
     print("\nGenerated files:")
-    print("  ✓ MST_Analysis_Visualizations.png")
-    print("  ✓ MST_Summary_Statistics.png")
-    print("  ✓ MST_ANALYSIS_REPORT.md")
+    print("MST_Analysis_Visualizations.png")
+    print("MST_Summary_Statistics.png")
+    print("MST_ANALYSIS_REPORT.md")
     print("\nAll results saved to:")
     print(f"  {base_path}")
-    print("=" * 70 + "\n")
     
     return analysis
 
