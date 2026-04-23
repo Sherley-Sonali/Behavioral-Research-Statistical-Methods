@@ -1,622 +1,737 @@
 """
-MST Analysis Pipeline  (updated to match actual data structure)
-Run from the folder containing:
-  Both_item_task/   item_only/   task_only/
+MST (Mnemonic Similarity Task) — Complete Behavioral Analysis DATA ANALYSIS
 
-Changes from original:
-  - Uses `position_of_stimuli` column already present in test CSVs
-      (no longer inferred from task-file order)
-  - Bin lookup: image stems like "039b" → numeric key "39"
-      mapped separately for Objects (Set6 bins) and Scenes (SetScC bins)
-  - `classify_trial` handles Windows backslash paths and Foils\ folder
-  - `find_participant_pairs` keeps the LATEST file when a PID has duplicates
-      and processes participants that have only a test file (position is
-      in the test CSV so a task file is not strictly required)
-  - Encoding-RT collection is still attempted when a task file exists
+TASK phase (encoding):
+  - 280 images (Objects & Scenes), all 'a' versions (originals)
+  - Responses: f / j  (indoor/outdoor or living/non-living depending on condition)
+  - Key metric: encoding_task_accuracy, reaction time
 
-Output: figures/ directory + mst_results.csv + mst_summary.txt
+TEST phase (recognition memory):
+  - 150 trials: targets (a), lures (b), foils (new)
+  - Responses: o=old, s=similar, n=new
+  - Positions: pre / mid / post (temporal encoding position) / none (foils)
+  - Key metrics:
+      * Target HR  (hits)     : responded 'o' to targets
+      * Lure CR    (lure discrimination): responded 's' to lures  <- MST core metric
+      * Foil CR    (correct rejection): responded 'n' to foils
+      * Lure FA    (false alarms): responded 'o' to lures
+      * LDI        (Lure Discrimination Index) = Lure CR - Lure FA
+      * REC Index  (Recognition) = Target HR - Foil FA
+
+Datasets: Both_item_task, item_only, task_only
+
+Usage:
+    python3 mst_data_analysis.py --base_dir .
 """
 
-import os, re, warnings
+import os, glob, warnings, argparse
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import scipy.stats as stats
-from pathlib import Path
-from itertools import combinations
+from matplotlib.backends.backend_pdf import PdfPages
+import seaborn as sns
+from scipy import stats
 
 warnings.filterwarnings("ignore")
-plt.rcParams.update({
-    "font.family": "DejaVu Sans", "axes.spines.top": False,
-    "axes.spines.right": False, "axes.grid": True,
-    "grid.alpha": 0.3, "grid.linestyle": "--", "figure.dpi": 150
-})
 
-FIGURES_DIR = Path("figures")
-FIGURES_DIR.mkdir(exist_ok=True)
-
-CONDITIONS = {
-    "item_only":       {"folder": "item_only",       "data_subdir": "item_only_data"},
-    "task_only":       {"folder": "task_only",        "data_subdir": "task_only_data"},
-    "both_item_task":  {"folder": "Both_item_task",   "data_subdir": "both_data"},
+# Palette
+C = {
+    "both":      "#2196F3",
+    "item_only": "#E91E63",
+    "task_only": "#4CAF50",
+    "target":    "#3F51B5",
+    "lure":      "#FF5722",
+    "foil":      "#607D8B",
+    "Objects":   "#FF9800",
+    "Scenes":    "#9C27B0",
+    "pre":       "#26C6DA",
+    "mid":       "#AB47BC",
+    "post":      "#EF5350",
 }
-
-# 1. LOAD BINS
-def load_bins(folder):
-    """
-    Return two dicts:  obj_bins, scene_bins
-    Each maps integer-string key (e.g. "39") → bin number (1-5).
-
-    Bin files have format:  NUMBER<TAB>BIN  (one per line, no header)
-    Image stems look like "039b" (lure) or "039a" (target).
-    To look up a bin: strip trailing letter and leading zeros → "39".
-    """
-    def _read(fname):
-        out = {}
-        fpath = Path(folder) / fname
-        if not fpath.exists():
-            return out
-        with open(fpath) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = re.split(r"[\t,\s]+", line)
-                if len(parts) >= 2:
-                    try:
-                        out[parts[0].lstrip("0") or "0"] = int(parts[1])
-                    except ValueError:
-                        pass
-        return out
-
-    # Objects
-    obj_bins = _read("Set6 bins.txt") or _read("Set6 bins_ob.txt")
-    # Scenes (may not exist in every condition)
-    scene_bins = _read("SetScC bins.txt")
-    return obj_bins, scene_bins
-
-
-def stem_to_bin_key(image_stem):
-    """Convert e.g. "039b" or "039a" → "39" for bin lookup."""
-    s = re.sub(r"[ab]$", "", image_stem, flags=re.IGNORECASE)
-    try:
-        return str(int(s))
-    except ValueError:
-        return s
-
-
-def is_scene(image_path):
-    """Return True if the path is under a Scenes/ folder."""
-    return re.search(r"[Ss]cenes", str(image_path)) is not None
-
-
-# 2. TRIAL CLASSIFICATION (path-safe)
-def classify_trial(image_path):
-    """Classify as foil / lure / target.  Handles backslash Windows paths."""
-    p = str(image_path).replace("\\", "/")
-    lower = p.lower()
-    if "foil" in lower:
-        return "foil"
-    fname = lower.split("/")[-1]          # filename only
-    if fname.endswith("b.jpg"):
-        return "lure"
-    if fname.endswith("a.jpg"):
-        return "target"
-    return "unknown"
-
-
-# 3. LOAD TASK (ENCODING) CSV  (unchanged logic)
-def load_task_csv(fpath):
-    df = pd.read_csv(fpath)
-    df.columns = df.columns.str.strip()
-    return df
-
-
-def get_encoding_rt(task_df):
-    """Return dict: stem → total RT (s)"""
-    rt_map = {}
-    task_rows = task_df[
-        task_df["image_path"].notna() &
-        (task_df["image_path"].str.len() > 2) &
-        (~task_df["image_path"].str.startswith("practice"))
-    ]
-    for _, row in task_rows.iterrows():
-        stem = Path(str(row["image_path"]).replace("\\", "/")).stem
-        rt9 = row.get("key_resp_9.rt", np.nan)
-        rt8 = row.get("key_resp_8.rt", np.nan)
-        if pd.notna(rt9) and float(rt9) > 0:
-            rt_map[stem] = float(rt9)
-        elif pd.notna(rt8) and float(rt8) > 0:
-            rt_map[stem] = 3.0 + float(rt8)
-    return rt_map
-
-
-# 4. LOAD TEST CSV
-def load_test_csv(fpath):
-    df = pd.read_csv(fpath)
-    df.columns = df.columns.str.strip()
-
-    # Keep only rows that have an image path
-    df = df[df["image_path"].notna() & (df["image_path"].str.len() > 2)].copy()
-
-    df["trial_type"]  = df["image_path"].apply(classify_trial)
-    df["image_stem"]  = df["image_path"].apply(
-        lambda p: Path(str(p).replace("\\", "/")).stem
-    )
-    df["is_scene"]    = df["image_path"].apply(is_scene)
-
-    # Normalise response column
-    resp_col = next((c for c in ["key_resp_3.keys", "key_resp_3.key", "response"]
-                     if c in df.columns), None)
-    if resp_col:
-        df["response"] = df[resp_col].astype(str).str.strip().str.lower()
-    else:
-        df["response"] = np.nan
-
-    # RT
-    rt_col = next((c for c in ["key_resp_3.rt", "rt"] if c in df.columns), None)
-    df["rt"] = df[rt_col].astype(float) if rt_col else np.nan
-
-    # ── Position: use the column already in the CSV ──────────────────────
-    if "position_of_stimuli" in df.columns:
-        df["position"] = df["position_of_stimuli"].str.strip().str.lower()
-        # map 'none' (foils) to NaN
-        df["position"] = df["position"].replace({"none": np.nan, "": np.nan})
-    else:
-        df["position"] = np.nan   # fallback – will leave metrics NaN
-
-    return df
-
-
-# 5. COMPUTE REC & LDI
-RESPONSE_MAP = {
-    "o": "old", "s": "similar", "n": "new",
-    # legacy key mappings kept for safety
-    "f": "old", "j": "old",
-    "g": "similar", "k": "similar",
-    "h": "new", "l": "new",
-    "old": "old", "similar": "similar", "new": "new",
+DATASET_COLORS = [C["both"], C["item_only"], C["task_only"]]
+FOLDER_ALIASES = {
+    "both":      ["Both_item_task", "both_data", "both"],
+    "item_only": ["item_only", "item_only_data"],
+    "task_only": ["task_only", "task_only_data"],
 }
+DATASETS  = ['both', 'item_only', 'task_only']
+DS_LABELS = ['Both', 'Item Only', 'Task Only']
 
-def norm_resp(r):
-    if pd.isna(r) or str(r).lower() in ("nan", "none", ""):
-        return np.nan
-    return RESPONSE_MAP.get(str(r).strip().lower(), np.nan)
+# DATA LOADING
 
-
-def compute_metrics(test_df, obj_bins, scene_bins):
-    """Compute REC and LDI per event position and per lure bin."""
-    test_df = test_df.copy()
-    test_df["resp_norm"] = test_df["response"].apply(norm_resp)
-
-    # Bin lookup: use obj or scene bins depending on image folder
-    def get_bin(row):
-        key = stem_to_bin_key(row["image_stem"])
-        bins = scene_bins if row["is_scene"] else obj_bins
-        return bins.get(key, np.nan)
-
-    test_df["lure_bin"] = test_df.apply(get_bin, axis=1)
-
-    test_df = test_df[test_df["resp_norm"].notna()]
-
-    foils = test_df[test_df["trial_type"] == "foil"]
-    foil_old_rate = (foils["resp_norm"] == "old").mean()    if len(foils) > 0 else 0
-    foil_sim_rate = (foils["resp_norm"] == "similar").mean() if len(foils) > 0 else 0
-
-    metrics = {"foil_old_rate": foil_old_rate, "foil_sim_rate": foil_sim_rate}
-
-    # By event position
-    for pos in ["pre", "mid", "post"]:
-        tgt = test_df[(test_df["trial_type"] == "target") & (test_df["position"] == pos)]
-        lur = test_df[(test_df["trial_type"] == "lure")   & (test_df["position"] == pos)]
-        hit = (tgt["resp_norm"] == "old").mean()     if len(tgt) > 0 else np.nan
-        sim = (lur["resp_norm"] == "similar").mean() if len(lur) > 0 else np.nan
-        metrics[f"REC_{pos}"] = hit - foil_old_rate  if pd.notna(hit) else np.nan
-        metrics[f"LDI_{pos}"] = sim - foil_sim_rate  if pd.notna(sim) else np.nan
-        tgt_rt = test_df[
-            test_df["trial_type"].isin(["target", "lure"]) & (test_df["position"] == pos)
-        ]["rt"]
-        metrics[f"RT_{pos}"] = tgt_rt.median() if len(tgt_rt) > 0 else np.nan
-
-    # By lure bin
-    for b in range(1, 6):
-        lur = test_df[(test_df["trial_type"] == "lure") & (test_df["lure_bin"] == b)]
-        sim = (lur["resp_norm"] == "similar").mean() if len(lur) > 0 else np.nan
-        metrics[f"LDI_bin{b}"] = sim - foil_sim_rate if pd.notna(sim) else np.nan
-
-    return metrics
-
-# 6. PROCESS ALL PARTICIPANTS
-def find_participant_pairs(data_dir):
-    """
-    Return list of (pid, task_path_or_None, test_path).
-
-    Handles:
-    - Multiple files per PID: keeps the LATEST file by filename (date-stamped).
-    - Participants with only a test file (no task file).
-    """
-    csvs = sorted(Path(data_dir).glob("*.csv"))
-
-    # Group by PID and type, keeping last (latest) file
-    task_files, test_files = {}, {}
-    for f in csvs:
-        m = re.match(r"(\d{5})", f.name)
-        if not m:
-            continue
-        pid = m.group(1)
-        if "_task_" in f.name.lower():
-            task_files[pid] = f        # later sort means last=newest
-        elif "_test_" in f.name.lower():
-            test_files[pid] = f
-
-    pairs = []
-    for pid in test_files:
-        pairs.append((pid, task_files.get(pid), test_files[pid]))
-    return pairs
+def find_folder(base, aliases):
+    for a in aliases:
+        p = os.path.join(base, a)
+        if os.path.isdir(p):
+            return p
+    return None
 
 
-def process_condition(cond_name, cond_info):
-    folder   = cond_info["folder"]
-    data_dir = Path(folder) / cond_info["data_subdir"]
-    if not data_dir.exists():
-        print(f"  [SKIP] {data_dir} not found")
-        return pd.DataFrame()
-
-    obj_bins, scene_bins = load_bins(folder)
-    pairs = find_participant_pairs(data_dir)
-    print(f"  Found {len(pairs)} participants in {cond_name}")
-
-    records = []
-    for pid, task_path, test_path in pairs:
-        try:
-            test_df = load_test_csv(test_path)
-            m = compute_metrics(test_df, obj_bins, scene_bins)
-            
-            # Optional encoding RT (needs task file)
-            if task_path is not None:
-                task_df = load_task_csv(task_path)
-                # (encoding RT stored but not used in current metrics)
-            m["participant_id"] = pid
-            m["condition"]      = cond_name
-            records.append(m)
-        except Exception as e:
-            print(f"    [ERROR] pid={pid}: {e}")
-
-    return pd.DataFrame(records)
-
-
-# 7. STATISTICS
-def one_sample_t(values, label=""):
-    v = values.dropna()
-    if len(v) < 3:
+def parse_task_file(path, dataset, subject_id):
+    df = pd.read_csv(path)
+    trials = df[df['trials.thisN'].notna()].copy()
+    if trials.empty:
         return None
-    t, p = stats.ttest_1samp(v, 0)
-    d = t / np.sqrt(len(v))
-    return {"label": label, "n": len(v), "mean": v.mean(), "sem": v.sem(),
-            "t": t, "p": p, "d": d}
+
+    resp9 = trials['trials.key_resp_9.keys'] if 'trials.key_resp_9.keys' in trials.columns else pd.Series(np.nan, index=trials.index)
+    resp8 = trials['trials.key_resp_8.keys'] if 'trials.key_resp_8.keys' in trials.columns else pd.Series(np.nan, index=trials.index)
+    rt9   = trials['trials.key_resp_9.rt']   if 'trials.key_resp_9.rt'   in trials.columns else pd.Series(np.nan, index=trials.index)
+    rt8   = trials['trials.key_resp_8.rt']   if 'trials.key_resp_8.rt'   in trials.columns else pd.Series(np.nan, index=trials.index)
+    trials['response'] = resp9.fillna(resp8)
+    trials['rt']       = rt9.fillna(rt8)
+
+    trials['image_folder'] = trials['image_path'].apply(
+        lambda x: str(x).replace('\\', '/').split('/')[0])
+    trials['image_file'] = trials['image_path'].apply(
+        lambda x: str(x).replace('\\', '/').split('/')[-1])
+
+    if 'encoding_task_accuracy' in df.columns:
+        enc_acc = df['encoding_task_accuracy'].dropna().values
+        encoding_accuracy = float(enc_acc[0]) if len(enc_acc) > 0 else np.nan
+    else:
+        encoding_accuracy = np.nan
+
+    trials['dataset']           = dataset
+    trials['subject_id']        = subject_id
+    trials['encoding_accuracy'] = encoding_accuracy
+    return trials
 
 
-def paired_t(a, b, label=""):
-    df_ = pd.DataFrame({"a": a, "b": b}).dropna()
-    if len(df_) < 3:
+def parse_test_file(path, dataset, subject_id):
+    df = pd.read_csv(path)
+    trials = df[df['trials.thisN'].notna()].copy()
+    if trials.empty:
         return None
-    t, p = stats.ttest_rel(df_["a"], df_["b"])
-    diff = df_["a"] - df_["b"]
-    d = diff.mean() / diff.std()
-    return {"label": label, "n": len(df_), "mean_diff": diff.mean(),
-            "sem_diff": diff.sem(), "t": t, "p": p, "d": d}
+
+    trials['image_folder'] = trials['image_path'].apply(
+        lambda x: 'Objects' if 'Object' in str(x) else ('Scenes' if 'Scene' in str(x) else 'Foils'))
+    trials['image_file'] = trials['image_path'].apply(
+        lambda x: str(x).replace('\\\\', '/').split('/')[-1])
+    trials['image_version'] = trials['image_file'].str[-5]
+
+    trials['stimulus_type'] = trials.apply(lambda r:
+        'target' if r['image_folder'] != 'Foils' and r['image_version'] == 'a'
+        else ('lure' if r['image_folder'] != 'Foils' and r['image_version'] == 'b'
+        else 'foil'), axis=1)
+
+    trials['response'] = trials['trials.key_resp_3.keys']
+    trials['rt']       = trials['trials.key_resp_3.rt']
+
+    trials['correct'] = trials.apply(lambda r:
+        (r['stimulus_type'] == 'target' and r['response'] == 'o') or
+        (r['stimulus_type'] == 'lure'   and r['response'] == 's') or
+        (r['stimulus_type'] == 'foil'   and r['response'] == 'n'), axis=1)
+
+    trials['dataset']    = dataset
+    trials['subject_id'] = subject_id
+    return trials
 
 
-# 8. FIGURES
-COLORS = {
-    "pre":  "#2563EB",
-    "mid":  "#6B7280",
-    "post": "#DC2626",
-    "item_only":      "#0EA5E9",
-    "task_only":      "#F59E0B",
-    "both_item_task": "#10B981",
-}
-POSITIONS  = ["pre", "mid", "post"]
-POS_LABELS = {"pre": "Pre-boundary", "mid": "Mid-event", "post": "Post-boundary"}
-
-
-def bar_with_points(ax, data_by_group, ylabel, title, reference_line=True, colors=None):
-    xs = np.arange(len(data_by_group))
-    for i, (label, vals) in enumerate(data_by_group.items()):
-        v = pd.Series(vals).dropna()
-        if len(v) == 0:
+def load_all(base_dir):
+    task_frames, test_frames = [], []
+    for ds_key, aliases in FOLDER_ALIASES.items():
+        folder = find_folder(base_dir, aliases)
+        if not folder:
+            print(f"  [SKIP] {ds_key} not found")
             continue
-        col = (colors or COLORS).get(label, "#666")
-        ax.bar(i, v.mean(), color=col, alpha=0.8, width=0.5, zorder=3)
-        ax.errorbar(i, v.mean(), yerr=v.sem(), color="black",
-                    fmt="none", capsize=4, linewidth=1.5, zorder=4)
-        jitter = np.random.uniform(-0.18, 0.18, len(v))
-        ax.scatter(i + jitter, v.values, color=col, alpha=0.3, s=14, zorder=5)
-    if reference_line:
-        ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xticks(xs)
-    ax.set_xticklabels([POS_LABELS.get(k, k) for k in data_by_group.keys()], fontsize=9)
-    ax.set_ylabel(ylabel, fontsize=10)
-    ax.set_title(title, fontsize=11, fontweight="bold", pad=8)
+        task_csvs = sorted(glob.glob(os.path.join(folder, '**', '*_MST_task_*.csv'), recursive=True))
+        test_csvs = sorted(glob.glob(os.path.join(folder, '**', '*_MST_test_*.csv'), recursive=True))
+        print(f"  {ds_key}: {len(task_csvs)} task + {len(test_csvs)} test files")
+        for path in task_csvs:
+            sid = os.path.basename(path).split('_MST_task_')[0]
+            df = parse_task_file(path, ds_key, sid)
+            if df is not None:
+                task_frames.append(df)
+        for path in test_csvs:
+            sid = os.path.basename(path).split('_MST_test_')[0]
+            df = parse_test_file(path, ds_key, sid)
+            if df is not None:
+                test_frames.append(df)
+
+    task_df = pd.concat(task_frames, ignore_index=True) if task_frames else pd.DataFrame()
+    test_df = pd.concat(test_frames, ignore_index=True) if test_frames else pd.DataFrame()
+    return task_df, test_df
 
 
-def sig_label(p):
-    if p < 0.001: return "***"
-    if p < 0.01:  return "**"
-    if p < 0.05:  return "*"
-    return "ns"
+# METRICS
+
+def compute_task_metrics(task_df):
+    rows = []
+    for (ds, sid), g in task_df.groupby(['dataset', 'subject_id']):
+        total   = len(g)
+        n_resp  = g['response'].notna().sum()
+        miss_rt = (g['rt'].isna() | (g['response'].isna())).sum()
+
+        row = dict(dataset=ds, subject_id=sid,
+                   n_trials=total, n_responded=n_resp, n_missed=miss_rt,
+                   miss_rate=miss_rt / total,
+                   encoding_accuracy=g['encoding_accuracy'].iloc[0])
+
+        rt_vals = g.loc[g['rt'].notna(), 'rt']
+        row.update(rt_mean=rt_vals.mean(), rt_median=rt_vals.median(),
+                   rt_std=rt_vals.std(),
+                   rt_cv=rt_vals.std() / rt_vals.mean() if rt_vals.mean() > 0 else np.nan)
+
+        for folder in ['Objects', 'Scenes']:
+            fg   = g[g['image_folder'] == folder]
+            rt_f = fg.loc[fg['rt'].notna(), 'rt']
+            row[f'{folder}_n']       = len(fg)
+            row[f'{folder}_rt_mean'] = rt_f.mean() if len(rt_f) > 0 else np.nan
+            row[f'{folder}_rt_std']  = rt_f.std()  if len(rt_f) > 1 else np.nan
+            row[f'{folder}_miss']    = fg['rt'].isna().sum()
+
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
-def fig1_rec_by_position(df, save_path):
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), sharey=True)
-    fig.suptitle("Figure 1 — Target Recognition (REC) by Event Position",
-                 fontsize=13, fontweight="bold")
-    for ax, cond in zip(axes, list(CONDITIONS.keys())):
-        sub = df[df["condition"] == cond]
-        data = {pos: sub[f"REC_{pos}"].dropna().values for pos in POSITIONS}
-        bar_with_points(ax, data, "REC (corrected hit rate)",
-                        cond.replace("_", " ").title(), colors=COLORS)
-        for i, pos in enumerate(POSITIONS):
-            vals = sub[f"REC_{pos}"].dropna()
-            if len(vals) >= 3:
-                t, p = stats.ttest_1samp(vals, 0)
-                ymax = vals.mean() + vals.sem() + 0.04
-                ax.text(i, ymax, sig_label(p), ha="center", fontsize=10,
-                        color="darkred" if p < 0.05 else "gray")
-    plt.tight_layout()
-    fig.savefig(save_path, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
+def compute_test_metrics(test_df):
+    rows = []
+    for (ds, sid), g in test_df.groupby(['dataset', 'subject_id']):
+        row = dict(dataset=ds, subject_id=sid, n_trials=len(g))
 
-
-def fig2_ldi_by_position(df, save_path):
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), sharey=True)
-    fig.suptitle("Figure 2 — Lure Discrimination Index (LDI) by Event Position",
-                 fontsize=13, fontweight="bold")
-    for ax, cond in zip(axes, list(CONDITIONS.keys())):
-        sub = df[df["condition"] == cond]
-        data = {pos: sub[f"LDI_{pos}"].dropna().values for pos in POSITIONS}
-        bar_with_points(ax, data, "LDI (corrected similar rate)",
-                        cond.replace("_", " ").title(), colors=COLORS)
-        for i, pos in enumerate(POSITIONS):
-            vals = sub[f"LDI_{pos}"].dropna()
-            if len(vals) >= 3:
-                t, p = stats.ttest_1samp(vals, 0)
-                ymax = vals.mean() + vals.sem() + 0.03
-                ax.text(i, ymax, sig_label(p), ha="center", fontsize=10,
-                        color="darkblue" if p < 0.05 else "gray")
-    plt.tight_layout()
-    fig.savefig(save_path, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
-
-
-def fig3_lure_bins(df, save_path):
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for cond in CONDITIONS:
-        color = COLORS[cond]
-        sub = df[df["condition"] == cond]
-        means, sems = [], []
-        for b in range(1, 6):
-            col = f"LDI_bin{b}"
-            if col in sub.columns:
-                v = sub[col].dropna()
-                means.append(v.mean() if len(v) > 0 else np.nan)
-                sems.append(v.sem()   if len(v) > 0 else 0)
-            else:
-                means.append(np.nan); sems.append(0)
-        ax.errorbar(range(1, 6), means, yerr=sems, marker="o",
-                    label=cond.replace("_", " ").title(),
-                    color=color, linewidth=2, capsize=4, markersize=6)
-    ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_xlabel("Lure Similarity Bin (1=Most Similar → 5=Least Similar)", fontsize=10)
-    ax.set_ylabel("LDI", fontsize=10)
-    ax.set_title("Figure 3 — LDI by Lure Similarity Bin", fontsize=12, fontweight="bold")
-    ax.legend(fontsize=9)
-    plt.tight_layout()
-    fig.savefig(save_path, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
-
-
-def fig4_rt(df, save_path):
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    xs = np.arange(3)
-    w = 0.25
-    for i, cond in enumerate(CONDITIONS):
-        color = COLORS[cond]
-        sub = df[df["condition"] == cond]
-        means = [sub[f"RT_{pos}"].dropna().mean() for pos in POSITIONS]
-        sems  = [sub[f"RT_{pos}"].dropna().sem()  for pos in POSITIONS]
-        ax.bar(xs + i*w, means, w, label=cond.replace("_", " ").title(),
-               color=color, alpha=0.8)
-        ax.errorbar(xs + i*w, means, yerr=sems, fmt="none",
-                    color="black", capsize=3, linewidth=1)
-    ax.set_xticks(xs + w)
-    ax.set_xticklabels([POS_LABELS[p] for p in POSITIONS])
-    ax.set_ylabel("Median RT (s)", fontsize=10)
-    ax.set_title("Figure 4 — Response Time by Event Position",
-                 fontsize=12, fontweight="bold")
-    ax.legend(fontsize=8)
-    plt.tight_layout()
-    fig.savefig(save_path, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
-
-
-def fig5_condition_comparison(df, save_path):
-    """REC and LDI pre−post difference across conditions."""
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-    for ax, metric in zip(axes, ["REC", "LDI"]):
-        diffs, cond_labels = [], []
-        for cond in CONDITIONS:
-            sub  = df[df["condition"] == cond]
-            pre  = sub[f"{metric}_pre"].dropna()
-            post = sub[f"{metric}_post"].dropna()
-            common = min(len(pre), len(post))
-            if common < 3:
+        for stype in ['target', 'lure', 'foil']:
+            sg = g[g['stimulus_type'] == stype]
+            if sg.empty:
                 continue
-            diff = pre.values[:common] - post.values[:common]
-            diffs.append(diff)
-            cond_labels.append(cond.replace("_", " ").title())
-        for i, (d, lbl) in enumerate(zip(diffs, cond_labels)):
-            color = list(COLORS.values())[i + 3]
-            ax.bar(i, d.mean(), color=color, alpha=0.8, width=0.5)
-            ax.errorbar(i, d.mean(), yerr=d.std()/np.sqrt(len(d)),
-                        fmt="none", color="black", capsize=4)
-            jitter = np.random.uniform(-0.15, 0.15, len(d))
-            ax.scatter(i + jitter, d, color=color, alpha=0.3, s=12)
-        ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-        ax.set_xticks(range(len(cond_labels)))
-        ax.set_xticklabels(cond_labels, fontsize=9)
-        ax.set_ylabel(f"{metric} Pre − Post", fontsize=10)
-        ax.set_title(f"{metric}: Pre minus Post Difference",
-                     fontsize=11, fontweight="bold")
+            row[f'{stype}_n']   = len(sg)
+            row[f'{stype}_acc'] = sg['correct'].mean()
+            rt_v = sg.loc[sg['rt'].notna(), 'rt']
+            row[f'{stype}_rt_mean']   = rt_v.mean()
+            row[f'{stype}_rt_median'] = rt_v.median()
+            row[f'{stype}_rt_std']    = rt_v.std()
+            for resp in ['o', 's', 'n']:
+                row[f'{stype}_resp_{resp}'] = (sg['response'] == resp).sum() / max(len(sg), 1)
+
+        target_hr = row.get('target_resp_o', np.nan)
+        lure_cr   = row.get('lure_resp_s',   np.nan)
+        lure_fa   = row.get('lure_resp_o',   np.nan)
+        foil_fa   = row.get('foil_resp_o',   np.nan)
+
+        row['LDI']         = lure_cr - lure_fa
+        row['REC']         = target_hr - foil_fa
+        row['overall_acc'] = g['correct'].mean()
+
+        for pos in ['pre', 'mid', 'post']:
+            pg = g[g['position_of_stimuli'] == pos]
+            if pg.empty:
+                continue
+            for stype in ['target', 'lure']:
+                sg = pg[pg['stimulus_type'] == stype]
+                if not sg.empty:
+                    row[f'{pos}_{stype}_acc'] = sg['correct'].mean()
+                    row[f'{pos}_{stype}_rt']  = sg.loc[sg['rt'].notna(), 'rt'].mean()
+
+        for folder in ['Objects', 'Scenes']:
+            fg = g[g['image_folder'] == folder]
+            if fg.empty:
+                continue
+            for stype in ['target', 'lure']:
+                sg = fg[fg['stimulus_type'] == stype]
+                if not sg.empty:
+                    row[f'{folder}_{stype}_acc'] = sg['correct'].mean()
+                    cr_col = 's' if stype == 'lure' else 'o'
+                    row[f'{folder}_{stype}_cr'] = (sg['response'] == cr_col).mean()
+
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# PLOTTING HELPERS
+
+def save(pdf, fig):
     plt.tight_layout()
-    fig.savefig(save_path, bbox_inches="tight")
-    plt.close()
-    print(f"  Saved: {save_path}")
+    pdf.savefig(fig, bbox_inches='tight')
+    plt.close(fig)
 
 
-# 9. STATS REPORT
-def run_all_stats(df, out_lines):
-    W = out_lines.append
-
-    W("=" * 60)
-    W("MST ANALYSIS — STATISTICAL RESULTS")
-    W("=" * 60)
-
-    for cond in list(CONDITIONS.keys()) + ["ALL"]:
-        sub = df if cond == "ALL" else df[df["condition"] == cond]
-        n = len(sub)
-        if n < 3:
-            continue
-        W(f"\n{'─'*50}")
-        W(f"CONDITION: {cond}  (N={n})")
-        W(f"{'─'*50}")
-
-        W("\n[One-sample t-tests against 0]")
-        W(f"{'Metric':<18} {'N':>4} {'Mean':>7} {'SEM':>7} {'t':>7} {'p':>8} {'d':>6}")
-        osamp_results = []
-        for metric in ["REC_pre","REC_mid","REC_post","LDI_pre","LDI_mid","LDI_post"]:
-            if metric in sub.columns:
-                r = one_sample_t(sub[metric], label=metric)
-                osamp_results.append(r)
-        for r in [r for r in osamp_results if r]:
-            W(f"{r['label']:<18} {r['n']:>4} {r['mean']:>7.3f} {r['sem']:>7.3f} "
-              f"{r['t']:>7.3f} {r['p']:>8.4f} {r['d']:>6.3f}")
-
-        W("\n[Paired t-tests: Pre vs Post]")
-        W(f"{'Comparison':<25} {'N':>4} {'Δmean':>7} {'ΔSEM':>7} {'t':>7} {'p':>8} {'d':>6}")
-        paired_results = []
-        for metric in ["REC", "LDI"]:
-            for (a, b) in [("pre","post"), ("pre","mid"), ("mid","post")]:
-                ca, cb = f"{metric}_{a}", f"{metric}_{b}"
-                if ca in sub.columns and cb in sub.columns:
-                    r = paired_t(sub[ca], sub[cb], label=f"{metric}: {a}-{b}")
-                    paired_results.append(r)
-        for r in [r for r in paired_results if r]:
-            W(f"{r['label']:<25} {r['n']:>4} {r['mean_diff']:>7.3f} {r['sem_diff']:>7.3f} "
-              f"{r['t']:>7.3f} {r['p']:>8.4f} {r['d']:>6.3f}")
-
-        if cond != "ALL":
-            W("\n[LDI by Lure Bin]")
-            W(f"{'Bin':<6} {'N':>4} {'Mean':>7} {'SEM':>7} {'t':>7} {'p':>8}")
-            bin_results = []
-            for b in range(1, 6):
-                col = f"LDI_bin{b}"
-                if col in sub.columns:
-                    r = one_sample_t(sub[col], label=f"Bin {b}")
-                    bin_results.append(r)
-            for r in [r for r in bin_results if r]:
-                W(f"{r['label']:<6} {r['n']:>4} {r['mean']:>7.3f} {r['sem']:>7.3f} "
-                  f"{r['t']:>7.3f} {r['p']:>8.4f}")
-
-    W("\n" + "=" * 60)
-    W("CROSS-CONDITION COMPARISONS (One-way ANOVA: pre-post diff)")
-    W("=" * 60)
-    for metric in ["REC", "LDI"]:
-        groups, labels = [], []
-        for cond in CONDITIONS:
-            sub  = df[df["condition"] == cond]
-            pre  = sub[f"{metric}_pre"]
-            post = sub[f"{metric}_post"]
-            idx  = pre.dropna().index.intersection(post.dropna().index)
-            diff = pre.loc[idx] - post.loc[idx]
-            if len(diff) >= 3:
-                groups.append(diff.values)
-                labels.append(cond)
-        if len(groups) >= 2:
-            f_stat, p_val = stats.f_oneway(*groups)
-            denom = sum(len(g) for g in groups) - len(groups)
-            W(f"\n{metric} Pre−Post: F({len(groups)-1},{denom}) = {f_stat:.3f}, p = {p_val:.4f}")
-            W("  Post-hoc pairwise (Holm-Bonferroni):")
-            posthoc = []
-            for (i, j) in combinations(range(len(groups)), 2):
-                t, p = stats.ttest_ind(groups[i], groups[j])
-                pool_std = np.sqrt(
-                    ((len(groups[i])-1)*groups[i].std()**2 +
-                     (len(groups[j])-1)*groups[j].std()**2) /
-                    (len(groups[i]) + len(groups[j]) - 2)
-                )
-                d = (groups[i].mean() - groups[j].mean()) / pool_std if pool_std > 0 else 0
-                posthoc.append({"label": f"{labels[i]} vs {labels[j]}",
-                                 "t": t, "p": p, "d": d,
-                                 "n": len(groups[i]) + len(groups[j])})
-            W(f"  {'Comparison':<40} {'t':>7} {'p':>8} {'d':>6}")
-            for r in posthoc:
-                W(f"  {r['label']:<40} {r['t']:>7.3f} {r['p']:>8.4f} "
-                  f"{r['d']:>6.3f}")
-
-    W("\n" + "=" * 60)
-    W("ALPHA THRESHOLDS")
-    W("  Confirmatory: α = 0.05 (Uncorrected)")
-    W("=" * 60)
+def violin_with_strip(ax, data, x, y, palette, order, title, ylabel):
+    sns.violinplot(data=data, x=x, y=y, palette=palette, order=order,
+                   ax=ax, inner=None, alpha=0.5, cut=0)
+    sns.stripplot(data=data, x=x, y=y, palette=palette, order=order,
+                  ax=ax, size=4, jitter=True, alpha=0.7, zorder=2)
+    for i, grp in enumerate(order):
+        val = data[data[x] == grp][y].mean()
+        ax.hlines(val, i - 0.3, i + 0.3, colors='black', linewidths=2.5, zorder=3)
+    ax.set_title(title, fontsize=11, fontweight='bold')
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel('')
 
 
-# 10. MAIN
-def main():
-    print("\nMST Analysis Pipeline\n")
-    all_dfs = []
-    for cond_name, cond_info in CONDITIONS.items():
-        print(f"Processing: {cond_name}")
-        df_cond = process_condition(cond_name, cond_info)
-        if not df_cond.empty:
-            all_dfs.append(df_cond)
+def grouped_bar(ax, means, sems, groups, xlabel_list, colors, title, ylabel, ylim=None):
+    n_cats = len(groups)
+    x      = np.arange(len(xlabel_list))
+    width  = 0.8 / n_cats
+    for i, (grp, col) in enumerate(zip(groups, colors)):
+        offset = (i - n_cats / 2 + 0.5) * width
+        ax.bar(x + offset, means[i], width * 0.9, yerr=sems[i],
+               label=grp, color=col, alpha=0.85, capsize=4,
+               error_kw=dict(elinewidth=1.2))
+    ax.set_xticks(x)
+    ax.set_xticklabels(xlabel_list, fontsize=10)
+    ax.set_title(title, fontsize=11, fontweight='bold')
+    ax.set_ylabel(ylabel)
+    ax.legend(fontsize=9)
+    if ylim:
+        ax.set_ylim(ylim)
 
-    if not all_dfs:
-        print("\n[ERROR] No data found. Check folder structure.")
+
+# PLOT SECTIONS  (data analysis only — no p-values / sig bars)
+
+# 1. TASK: Encoding Accuracy
+def plot_task_encoding_accuracy(tm, pdf):
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.suptitle('TASK — Encoding Accuracy', fontsize=14, fontweight='bold')
+
+    ax = axes[0]
+    violin_with_strip(ax, tm, 'dataset', 'encoding_accuracy',
+                      {d: c for d, c in zip(DATASETS, DATASET_COLORS)},
+                      DATASETS, 'Encoding Accuracy by Dataset', 'Accuracy')
+    ax.set_xticklabels(DS_LABELS)
+    ax.set_ylim(0, 1.05)
+
+    ax = axes[1]
+    for ds, col in zip(DATASETS, DATASET_COLORS):
+        vals = tm[tm['dataset'] == ds]['encoding_accuracy'].dropna()
+        ax.hist(vals, bins=15, alpha=0.6, color=col, label=ds, edgecolor='white')
+    ax.set_title('Distribution of Encoding Accuracy', fontsize=11, fontweight='bold')
+    ax.set_xlabel('Accuracy'); ax.set_ylabel('Count')
+    ax.legend(labels=DS_LABELS, fontsize=9)
+
+    ax = axes[2]
+    means = [tm[tm['dataset'] == d]['encoding_accuracy'].mean() for d in DATASETS]
+    sems  = [tm[tm['dataset'] == d]['encoding_accuracy'].sem()  for d in DATASETS]
+    bars  = ax.bar(DS_LABELS, means, yerr=sems, color=DATASET_COLORS, alpha=0.85,
+                   capsize=6, edgecolor='white', error_kw=dict(elinewidth=1.5))
+    for bar, m in zip(bars, means):
+        ax.text(bar.get_x() + bar.get_width() / 2, m + 0.01, f'{m:.3f}',
+                ha='center', fontsize=9, fontweight='bold')
+    ax.set_ylim(0, 1.1)
+    ax.set_title('Mean Encoding Accuracy ± SEM', fontsize=11, fontweight='bold')
+    ax.set_ylabel('Accuracy')
+    save(pdf, fig)
+
+
+# 2. TASK: Reaction Time
+def plot_task_rt(tm, task_df, pdf):
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('TASK — Reaction Time Analysis', fontsize=14, fontweight='bold')
+
+    ax = axes[0, 0]
+    for ds, col in zip(DATASETS, DATASET_COLORS):
+        vals = task_df[task_df['dataset'] == ds]['rt'].dropna()
+        if vals.std() > 0:
+            vals.plot.kde(ax=ax, color=col, linewidth=2.5, label=ds)
+    ax.set_title('RT Distribution by Dataset', fontsize=11, fontweight='bold')
+    ax.set_xlabel('RT (s)'); ax.set_ylabel('Density')
+    ax.legend(labels=DS_LABELS, fontsize=9); ax.set_xlim(0, 6)
+
+    ax = axes[0, 1]
+    violin_with_strip(ax, tm, 'dataset', 'rt_mean',
+                      {d: c for d, c in zip(DATASETS, DATASET_COLORS)},
+                      DATASETS, 'Mean RT per Subject', 'RT (s)')
+    ax.set_xticklabels(DS_LABELS)
+
+    ax = axes[0, 2]
+    obj_means = [tm[tm['dataset'] == d]['Objects_rt_mean'].mean() for d in DATASETS]
+    sce_means = [tm[tm['dataset'] == d]['Scenes_rt_mean'].mean()  for d in DATASETS]
+    obj_sems  = [tm[tm['dataset'] == d]['Objects_rt_mean'].sem()  for d in DATASETS]
+    sce_sems  = [tm[tm['dataset'] == d]['Scenes_rt_mean'].sem()   for d in DATASETS]
+    x = np.arange(3); w = 0.35
+    ax.bar(x - w/2, obj_means, w, yerr=obj_sems, label='Objects', color=C['Objects'], alpha=0.85, capsize=5)
+    ax.bar(x + w/2, sce_means, w, yerr=sce_sems, label='Scenes',  color=C['Scenes'],  alpha=0.85, capsize=5)
+    ax.set_xticks(x); ax.set_xticklabels(DS_LABELS)
+    ax.set_title('Mean RT: Objects vs Scenes', fontsize=11, fontweight='bold')
+    ax.set_ylabel('RT (s)'); ax.legend(fontsize=9)
+
+    ax = axes[1, 0]
+    for ds, col in zip(DATASETS, DATASET_COLORS):
+        vals = task_df[task_df['dataset'] == ds]['rt'].dropna()
+        ax.hist(vals, bins=40, alpha=0.5, color=col, label=ds, edgecolor='none', range=(0, 6))
+    ax.set_title('RT Histogram by Dataset', fontsize=11, fontweight='bold')
+    ax.set_xlabel('RT (s)'); ax.set_ylabel('Count')
+    ax.legend(labels=DS_LABELS, fontsize=9)
+
+    ax = axes[1, 1]
+    violin_with_strip(ax, tm, 'dataset', 'rt_cv',
+                      {d: c for d, c in zip(DATASETS, DATASET_COLORS)},
+                      DATASETS, 'RT Coefficient of Variation', 'CoV')
+    ax.set_xticklabels(DS_LABELS)
+
+    ax = axes[1, 2]
+    means = [tm[tm['dataset'] == d]['miss_rate'].mean() for d in DATASETS]
+    sems  = [tm[tm['dataset'] == d]['miss_rate'].sem()  for d in DATASETS]
+    ax.bar(DS_LABELS, means, yerr=sems, color=DATASET_COLORS, alpha=0.85,
+           capsize=6, edgecolor='white')
+    ax.set_title('Miss Rate (No Response)', fontsize=11, fontweight='bold')
+    ax.set_ylabel('Miss Rate')
+    save(pdf, fig)
+
+
+# 3. TASK: RT by Stimulus Category
+def plot_task_rt_by_category(task_df, pdf):
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle('TASK — RT by Stimulus Category per Dataset', fontsize=14, fontweight='bold')
+
+    for ax, (ds, dslabel, col) in zip(axes, zip(DATASETS, DS_LABELS, DATASET_COLORS)):
+        sub     = task_df[task_df['dataset'] == ds].copy()
+        folders = [f for f in ['Objects', 'Scenes'] if f in sub['image_folder'].unique()]
+        if not folders:
+            ax.set_visible(False); continue
+        data_list = [sub[sub['image_folder'] == f]['rt'].dropna() for f in folders]
+        bp = ax.boxplot(data_list, patch_artist=True, labels=folders,
+                        medianprops=dict(color='white', linewidth=2))
+        for patch, fc in zip(bp['boxes'], [C.get(f, col) for f in folders]):
+            patch.set_facecolor(fc); patch.set_alpha(0.75)
+        ax.set_title(dslabel, fontsize=11, fontweight='bold')
+        ax.set_ylabel('RT (s)'); ax.set_ylim(0, 7)
+    save(pdf, fig)
+
+
+# 4. TEST: Overall Accuracy & Response Distributions
+def plot_test_overall(sm, pdf):
+    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+    fig.suptitle('TEST — Overall Accuracy & Response Distributions', fontsize=14, fontweight='bold')
+
+    ax = axes[0, 0]
+    violin_with_strip(ax, sm, 'dataset', 'overall_acc',
+                      {d: c for d, c in zip(DATASETS, DATASET_COLORS)},
+                      DATASETS, 'Overall Accuracy', 'Accuracy')
+    ax.set_xticklabels(DS_LABELS); ax.set_ylim(0, 1)
+
+    ax = axes[0, 1]
+    x = np.arange(3); w = 0.25
+    for i, (st, stcol) in enumerate(zip(['target', 'lure', 'foil'],
+                                         [C['target'], C['lure'], C['foil']])):
+        means = [sm[sm['dataset'] == d][f'{st}_acc'].mean() for d in DATASETS]
+        sems  = [sm[sm['dataset'] == d][f'{st}_acc'].sem()  for d in DATASETS]
+        ax.bar(x + (i - 1) * w, means, w, yerr=sems, label=st.capitalize(),
+               color=stcol, alpha=0.85, capsize=4)
+    ax.set_xticks(x); ax.set_xticklabels(DS_LABELS)
+    ax.set_title('Accuracy by Stimulus Type', fontsize=11, fontweight='bold')
+    ax.set_ylabel('Accuracy'); ax.legend(fontsize=9); ax.set_ylim(0, 1)
+
+    ax = axes[0, 2]
+    violin_with_strip(ax, sm, 'dataset', 'LDI',
+                      {d: c for d, c in zip(DATASETS, DATASET_COLORS)},
+                      DATASETS, 'Lure Discrimination Index (LDI)', 'LDI')
+    ax.set_xticklabels(DS_LABELS)
+    ax.axhline(0, color='black', linestyle='--', linewidth=1)
+
+    ax = axes[1, 0]
+    violin_with_strip(ax, sm, 'dataset', 'REC',
+                      {d: c for d, c in zip(DATASETS, DATASET_COLORS)},
+                      DATASETS, 'Recognition Index (REC)', 'REC')
+    ax.set_xticklabels(DS_LABELS)
+    ax.axhline(0, color='black', linestyle='--', linewidth=1)
+
+    ax = axes[1, 1]
+    for ds, col in zip(DATASETS, DATASET_COLORS):
+        sm[sm['dataset'] == ds]['LDI'].dropna().pipe(
+            lambda v: ax.hist(v, bins=12, alpha=0.6, color=col, edgecolor='white'))
+    ax.axvline(0, color='black', linestyle='--', linewidth=1)
+    ax.set_title('LDI Distribution by Dataset', fontsize=11, fontweight='bold')
+    ax.set_xlabel('LDI'); ax.set_ylabel('Count')
+
+    ax = axes[1, 2]
+    for ds, col in zip(DATASETS, DATASET_COLORS):
+        sm[sm['dataset'] == ds]['REC'].dropna().pipe(
+            lambda v: ax.hist(v, bins=12, alpha=0.6, color=col, edgecolor='white'))
+    ax.axvline(0, color='black', linestyle='--', linewidth=1)
+    ax.set_title('REC Distribution by Dataset', fontsize=11, fontweight='bold')
+    ax.set_xlabel('REC'); ax.set_ylabel('Count')
+    save(pdf, fig)
+
+
+# 5. TEST: Response Proportions
+def plot_test_response_proportions(sm, pdf):
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig.suptitle('TEST — Response Proportions by Stimulus Type & Dataset',
+                 fontsize=14, fontweight='bold')
+
+    resp_labels = {'o': 'Old', 's': 'Similar', 'n': 'New'}
+    resp_colors = {'o': '#1976D2', 's': '#F57C00', 'n': '#388E3C'}
+
+    for ax, st in zip(axes, ['target', 'lure', 'foil']):
+        resp_means = {r: [sm[sm['dataset'] == d][f'{st}_resp_{r}'].mean() for d in DATASETS]
+                      for r in ['o', 's', 'n']}
+        x = np.arange(3); bottom = np.zeros(3)
+        for resp, col in resp_colors.items():
+            vals = np.array(resp_means[resp])
+            ax.bar(x, vals, bottom=bottom, color=col, alpha=0.85, label=resp_labels[resp])
+            for xi, (v, b) in enumerate(zip(vals, bottom)):
+                if v > 0.05:
+                    ax.text(xi, b + v / 2, f'{v:.2f}', ha='center', va='center',
+                            fontsize=8, fontweight='bold', color='white')
+            bottom += vals
+        ax.set_xticks(x); ax.set_xticklabels(DS_LABELS)
+        ax.set_title(f'{st.capitalize()} Stimuli', fontsize=11, fontweight='bold')
+        ax.set_ylabel('Proportion'); ax.set_ylim(0, 1.02)
+        if st == 'foil':
+            ax.legend(fontsize=9, loc='upper right')
+    save(pdf, fig)
+
+
+# 6. TEST: By Temporal Position
+def plot_test_by_position(sm, pdf):
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('TEST — Performance by Temporal Encoding Position',
+                 fontsize=14, fontweight='bold')
+
+    positions  = ['pre', 'mid', 'post']
+    pos_colors = [C['pre'], C['mid'], C['post']]
+
+    grouped_bar(axes[0, 0],
+        means=[[sm[sm['dataset'] == d][f'{p}_target_acc'].mean() for d in DATASETS] for p in positions],
+        sems= [[sm[sm['dataset'] == d][f'{p}_target_acc'].sem()  for d in DATASETS] for p in positions],
+        groups=positions, xlabel_list=DS_LABELS, colors=pos_colors,
+        title='Target Accuracy by Position', ylabel='Accuracy', ylim=(0, 1.1))
+
+    grouped_bar(axes[0, 1],
+        means=[[sm[sm['dataset'] == d][f'{p}_lure_acc'].mean() for d in DATASETS] for p in positions],
+        sems= [[sm[sm['dataset'] == d][f'{p}_lure_acc'].sem()  for d in DATASETS] for p in positions],
+        groups=positions, xlabel_list=DS_LABELS, colors=pos_colors,
+        title='Lure Correct Rejection by Position', ylabel='Accuracy', ylim=(0, 1.1))
+
+    grouped_bar(axes[1, 0],
+        means=[[sm[sm['dataset'] == d][f'{p}_target_rt'].mean() for d in DATASETS] for p in positions],
+        sems= [[sm[sm['dataset'] == d][f'{p}_target_rt'].sem()  for d in DATASETS] for p in positions],
+        groups=positions, xlabel_list=DS_LABELS, colors=pos_colors,
+        title='Target RT by Position', ylabel='RT (s)')
+
+    grouped_bar(axes[1, 1],
+        means=[[sm[sm['dataset'] == d][f'{p}_lure_rt'].mean() for d in DATASETS] for p in positions],
+        sems= [[sm[sm['dataset'] == d][f'{p}_lure_rt'].sem()  for d in DATASETS] for p in positions],
+        groups=positions, xlabel_list=DS_LABELS, colors=pos_colors,
+        title='Lure RT by Position', ylabel='RT (s)')
+    save(pdf, fig)
+
+
+# 7. TEST: Objects vs Scenes
+def plot_test_by_category(sm, pdf):
+    ds_with_scenes = [d for d in DATASETS
+                      if sm[sm['dataset'] == d]['Scenes_target_acc'].notna().any()]
+    if not ds_with_scenes:
         return
 
-    df = pd.concat(all_dfs, ignore_index=True)
-    df.to_csv("mst_results.csv", index=False)
-    print(f"\nSaved participant-level metrics: mst_results.csv ({len(df)} rows)")
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('TEST — Objects vs Scenes Performance', fontsize=14, fontweight='bold')
 
-    print("\nDescriptive summary (means across all participants):")
-    metric_cols = [c for c in df.columns
-                   if c.startswith("REC_") or c.startswith("LDI_") or c.startswith("RT_")]
-    print(df.groupby("condition")[metric_cols]
-            .agg(["mean", "sem", "count"]).round(3).to_string())
+    for ax_row, stype in zip([0, 1], ['target', 'lure']):
+        col_label = 'Target' if stype == 'target' else 'Lure'
+        x         = np.arange(len(ds_with_scenes)); w = 0.35
+        x_labels  = [DS_LABELS[DATASETS.index(d)] for d in ds_with_scenes]
 
-    print("\nGenerating figures...")
-    np.random.seed(42)
-    fig1_rec_by_position(df,      FIGURES_DIR / "fig1_REC_by_position.png")
-    fig2_ldi_by_position(df,      FIGURES_DIR / "fig2_LDI_by_position.png")
-    fig3_lure_bins(df,            FIGURES_DIR / "fig3_LDI_lure_bins.png")
-    fig4_rt(df,                   FIGURES_DIR / "fig4_RT_by_position.png")
-    fig5_condition_comparison(df, FIGURES_DIR / "fig5_condition_comparison.png")
+        for col_idx, (cat, cat_col) in enumerate(zip(['Objects', 'Scenes'],
+                                                      [C['Objects'], C['Scenes']])):
+            m = [sm[sm['dataset'] == d][f'{cat}_{stype}_acc'].mean() for d in ds_with_scenes]
+            e = [sm[sm['dataset'] == d][f'{cat}_{stype}_acc'].sem()  for d in ds_with_scenes]
+            axes[ax_row, 0].bar(x + (col_idx - 0.5) * w, m, w, yerr=e,
+                                label=cat, color=cat_col, alpha=0.85, capsize=5)
 
-    print("\nRunning statistics...")
-    out_lines = []
-    run_all_stats(df, out_lines)
-    report = "\n".join(out_lines)
-    print(report)
-    with open("mst_summary.txt", "w") as f:
-        f.write(report)
-    print("\nSaved: mst_summary.txt")
-    print("\n=== Done ===")
+            cr = [sm[sm['dataset'] == d][f'{cat}_{stype}_cr'].mean() for d in ds_with_scenes]
+            er = [sm[sm['dataset'] == d][f'{cat}_{stype}_cr'].sem()  for d in ds_with_scenes]
+            axes[ax_row, 1].bar(x + (col_idx - 0.5) * w, cr, w, yerr=er,
+                                label=cat, color=cat_col, alpha=0.85, capsize=5)
+
+        for c in [0, 1]:
+            axes[ax_row, c].set_xticks(x)
+            axes[ax_row, c].set_xticklabels(x_labels)
+            axes[ax_row, c].legend(fontsize=9)
+            axes[ax_row, c].set_ylim(0, 1.1)
+
+        axes[ax_row, 0].set_title(f'{col_label} Accuracy: Objects vs Scenes',
+                                   fontsize=11, fontweight='bold')
+        axes[ax_row, 0].set_ylabel('Accuracy')
+        axes[ax_row, 1].set_title(f'{col_label} Correct Response Rate: Objects vs Scenes',
+                                   fontsize=11, fontweight='bold')
+        axes[ax_row, 1].set_ylabel('Proportion')
+    save(pdf, fig)
 
 
-if __name__ == "__main__":
-    main()
+# 8. TEST: RT Analysis
+def plot_test_rt(sm, test_df, pdf):
+    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+    fig.suptitle('TEST — Reaction Time Analysis', fontsize=14, fontweight='bold')
+
+    ax = axes[0, 0]
+    for ds, col in zip(DATASETS, DATASET_COLORS):
+        vals = test_df[test_df['dataset'] == ds]['rt'].dropna()
+        if vals.std() > 0:
+            vals.plot.kde(ax=ax, color=col, linewidth=2.5)
+    ax.set_title('RT Distribution by Dataset', fontsize=11, fontweight='bold')
+    ax.set_xlabel('RT (s)'); ax.set_ylabel('Density'); ax.set_xlim(0, 35)
+
+    ax = axes[0, 1]
+    x = np.arange(3); w = 0.25
+    for i, (st, stcol) in enumerate(zip(['target', 'lure', 'foil'],
+                                         [C['target'], C['lure'], C['foil']])):
+        means = [sm[sm['dataset'] == d][f'{st}_rt_mean'].mean() for d in DATASETS]
+        sems  = [sm[sm['dataset'] == d][f'{st}_rt_mean'].sem()  for d in DATASETS]
+        ax.bar(x + (i - 1) * w, means, w, yerr=sems, label=st.capitalize(),
+               color=stcol, alpha=0.85, capsize=4)
+    ax.set_xticks(x); ax.set_xticklabels(DS_LABELS)
+    ax.set_title('Mean RT by Stimulus Type', fontsize=11, fontweight='bold')
+    ax.set_ylabel('RT (s)'); ax.legend(fontsize=9)
+
+    ax = axes[0, 2]
+    rt_all = pd.concat([
+        test_df[test_df['stimulus_type'] == st][['rt', 'dataset']].assign(stype=st)
+        for st in ['target', 'lure', 'foil']
+    ])
+    sns.violinplot(data=rt_all, x='stype', y='rt',
+                   palette={'target': C['target'], 'lure': C['lure'], 'foil': C['foil']},
+                   ax=ax, inner='box', cut=0)
+    ax.set_title('RT by Stimulus Type (All)', fontsize=11, fontweight='bold')
+    ax.set_xlabel(''); ax.set_ylabel('RT (s)')
+
+    positions  = ['pre', 'mid', 'post']
+    pos_colors = [C['pre'], C['mid'], C['post']]
+
+    grouped_bar(axes[1, 0],
+        means=[[sm[sm['dataset'] == d][f'{p}_target_rt'].mean() for d in DATASETS] for p in positions],
+        sems= [[sm[sm['dataset'] == d][f'{p}_target_rt'].sem()  for d in DATASETS] for p in positions],
+        groups=positions, xlabel_list=DS_LABELS, colors=pos_colors,
+        title='Target RT by Temporal Position', ylabel='RT (s)')
+
+    grouped_bar(axes[1, 1],
+        means=[[sm[sm['dataset'] == d][f'{p}_lure_rt'].mean() for d in DATASETS] for p in positions],
+        sems= [[sm[sm['dataset'] == d][f'{p}_lure_rt'].sem()  for d in DATASETS] for p in positions],
+        groups=positions, xlabel_list=DS_LABELS, colors=pos_colors,
+        title='Lure RT by Temporal Position', ylabel='RT (s)')
+
+    ax = axes[1, 2]
+    correct_rt   = [test_df[(test_df['dataset'] == d) & (test_df['correct'] == True)]['rt'].mean()
+                    for d in DATASETS]
+    incorrect_rt = [test_df[(test_df['dataset'] == d) & (test_df['correct'] == False)]['rt'].mean()
+                    for d in DATASETS]
+    x = np.arange(3); w = 0.35
+    ax.bar(x - w/2, correct_rt,   w, label='Correct',   color='#43A047', alpha=0.85)
+    ax.bar(x + w/2, incorrect_rt, w, label='Incorrect',  color='#E53935', alpha=0.85)
+    ax.set_xticks(x); ax.set_xticklabels(DS_LABELS)
+    ax.set_title('RT: Correct vs Incorrect', fontsize=11, fontweight='bold')
+    ax.set_ylabel('RT (s)'); ax.legend(fontsize=9)
+    save(pdf, fig)
+
+
+# 9. SUMMARY STATISTICS TABLE
+def plot_stats_summary(tm, sm, pdf):
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+    fig.suptitle('Summary Statistics Table', fontsize=14, fontweight='bold')
+
+    task_rows = []
+    for ds, label in zip(DATASETS, DS_LABELS):
+        sub = tm[tm['dataset'] == ds]
+        task_rows.append([
+            label,
+            f"{sub['encoding_accuracy'].mean():.3f} ± {sub['encoding_accuracy'].std():.3f}",
+            f"{sub['rt_mean'].mean():.2f} ± {sub['rt_mean'].std():.2f}",
+            f"{sub['rt_median'].mean():.2f}",
+            f"{sub['miss_rate'].mean() * 100:.1f}%",
+            str(len(sub)),
+        ])
+    t1 = axes[0].table(
+        cellText=task_rows,
+        colLabels=['Dataset', 'Enc. Acc (M±SD)', 'Mean RT (M±SD)', 'Median RT', 'Miss Rate', 'N'],
+        loc='center', cellLoc='center')
+    t1.auto_set_font_size(False); t1.set_fontsize(9.5); t1.scale(1, 2.2)
+    axes[0].set_title('TASK Phase Summary', fontsize=12, fontweight='bold', pad=20)
+    axes[0].axis('off')
+
+    test_rows = []
+    for ds, label in zip(DATASETS, DS_LABELS):
+        sub = sm[sm['dataset'] == ds]
+        test_rows.append([
+            label,
+            f"{sub['overall_acc'].mean():.3f} ± {sub['overall_acc'].std():.3f}",
+            f"{sub['target_acc'].mean():.3f}",
+            f"{sub['lure_acc'].mean():.3f}",
+            f"{sub['foil_acc'].mean():.3f}",
+            f"{sub['LDI'].mean():.3f} ± {sub['LDI'].std():.3f}",
+            f"{sub['REC'].mean():.3f} ± {sub['REC'].std():.3f}",
+            str(len(sub)),
+        ])
+    t2 = axes[1].table(
+        cellText=test_rows,
+        colLabels=['Dataset', 'Overall Acc', 'Target HR', 'Lure CR', 'Foil CR',
+                   'LDI (M±SD)', 'REC (M±SD)', 'N'],
+        loc='center', cellLoc='center')
+    t2.auto_set_font_size(False); t2.set_fontsize(9); t2.scale(1, 2.2)
+    axes[1].set_title('TEST Phase Summary', fontsize=12, fontweight='bold', pad=20)
+    axes[1].axis('off')
+    save(pdf, fig)
+
+
+# MAIN
+def main(base_dir, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"\n  MST Analysis  |  base: {base_dir}\n")
+
+    task_df, test_df = load_all(base_dir)
+    print(f"\nTotal task rows: {len(task_df)}  |  test rows: {len(test_df)}")
+
+    print("Computing per-subject metrics …")
+    tm = compute_task_metrics(task_df)
+    sm = compute_test_metrics(test_df)
+
+    tm.to_csv(os.path.join(out_dir, 'task_subject_metrics.csv'), index=False)
+    sm.to_csv(os.path.join(out_dir, 'test_subject_metrics.csv'), index=False)
+    print("  Saved task_subject_metrics.csv & test_subject_metrics.csv")
+
+    pdf_path = os.path.join(out_dir, 'MST_analysis_report.pdf')
+    print(f"Generating PDF: {pdf_path} …")
+
+    with PdfPages(pdf_path) as pdf:
+        # Cover page
+        fig = plt.figure(figsize=(12, 7))
+        fig.patch.set_facecolor('#1a1a2e')
+        fig.text(0.5, 0.6, 'MST Behavioral Analysis', ha='center', fontsize=26,
+                 fontweight='bold', color='white')
+        fig.text(0.5, 0.5, 'Both · Item-Only · Task-Only', ha='center', fontsize=16, color='#aaa')
+        fig.text(0.5, 0.4,
+                 f'N: both={len(tm[tm.dataset=="both"])}, '
+                 f'item_only={len(tm[tm.dataset=="item_only"])}, '
+                 f'task_only={len(tm[tm.dataset=="task_only"])}',
+                 ha='center', fontsize=12, color='#ccc')
+        pdf.savefig(fig, bbox_inches='tight'); plt.close(fig)
+
+        print("  1/8  Task: Encoding accuracy …")
+        plot_task_encoding_accuracy(tm, pdf)
+
+        print("  2/8  Task: Reaction time …")
+        plot_task_rt(tm, task_df, pdf)
+
+        print("  3/8  Task: RT by stimulus category …")
+        plot_task_rt_by_category(task_df, pdf)
+
+        print("  4/8  Test: Overall accuracy & indices …")
+        plot_test_overall(sm, pdf)
+
+        print("  5/8  Test: Response proportions …")
+        plot_test_response_proportions(sm, pdf)
+
+        print("  6/8  Test: Performance by temporal position …")
+        plot_test_by_position(sm, pdf)
+
+        print("  7/8  Test: Objects vs Scenes …")
+        plot_test_by_category(sm, pdf)
+
+        print("  8/8  Test: Reaction time analysis …")
+        plot_test_rt(sm, test_df, pdf)
+
+        print("  Summary statistics table …")
+        plot_stats_summary(tm, sm, pdf)
+
+    print(f"\n  Done! -> {pdf_path}\n")
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='MST Behavioral Data Analysis — data analysis only')
+    parser.add_argument('--base_dir', required=True,
+                        help='Root folder containing Both_item_task/, item_only/, task_only/')
+    parser.add_argument('--out_dir', default='./mst_analysis_output',
+                        help='Output directory for PDF and CSVs')
+    args = parser.parse_args()
+    main(args.base_dir, args.out_dir)
