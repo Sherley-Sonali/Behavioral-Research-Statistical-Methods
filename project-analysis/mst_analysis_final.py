@@ -1,6 +1,5 @@
 """
 MST Analysis Pipeline — Complete Final Version
-===============================================
 
 WHAT THIS VERSION ADDS OVER mst_analysis_final.py:
 
@@ -57,9 +56,7 @@ CONDITIONS = {
     "both_item_task":  {"folder": "Both_item_task",  "data_subdir": "both_data"},
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 1. LOAD BINS
-# ─────────────────────────────────────────────────────────────────────────────
 def load_bins(folder):
     def _read(fname):
         out = {}
@@ -96,9 +93,7 @@ def is_scene(image_path):
     return re.search(r"[Ss]cenes", str(image_path)) is not None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 2. TRIAL CLASSIFICATION
-# ─────────────────────────────────────────────────────────────────────────────
 def classify_trial(image_path):
     p = str(image_path).replace("\\", "/")
     lower = p.lower()
@@ -112,9 +107,7 @@ def classify_trial(image_path):
     return "unknown"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 3. LOAD TASK CSV
-# ─────────────────────────────────────────────────────────────────────────────
 def load_task_csv(fpath):
     df = pd.read_csv(fpath)
     df.columns = df.columns.str.strip()
@@ -139,9 +132,7 @@ def get_encoding_rt(task_df):
     return rt_map
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 4. LOAD TEST CSV
-# ─────────────────────────────────────────────────────────────────────────────
 RESPONSE_MAP = {
     "o": "old", "s": "similar", "n": "new",
     "f": "old", "j": "old",
@@ -185,9 +176,7 @@ def load_test_csv(fpath):
     return df
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 5. COMPUTE METRICS
-# ─────────────────────────────────────────────────────────────────────────────
 def compute_metrics(test_df, obj_bins, scene_bins):
     test_df = test_df.copy()
     test_df["resp_norm"] = test_df["response"].apply(norm_resp)
@@ -242,9 +231,7 @@ def compute_metrics(test_df, obj_bins, scene_bins):
     return metrics
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 6. PARTICIPANT LOADING
-# ─────────────────────────────────────────────────────────────────────────────
 def find_participant_pairs(data_dir):
     csvs = sorted(Path(data_dir).glob("*.csv"))
     task_files, test_files = {}, {}
@@ -285,9 +272,7 @@ def process_condition(cond_name, cond_info):
     return pd.DataFrame(records)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 7. STAT HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
 def one_sample_t(values, label=""):
     v = values.dropna()
     if len(v) < 3:
@@ -388,9 +373,7 @@ def power_for_kruskal(eta2, n_per_group, k=3, alpha=0.05):
         return np.nan
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 8. FIGURES (unchanged from original)
-# ─────────────────────────────────────────────────────────────────────────────
+# 8. FIGURES
 COLORS = {
     "pre":  "#2563EB", "mid": "#6B7280", "post": "#DC2626",
     "item_only": "#0EA5E9", "task_only": "#F59E0B", "both_item_task": "#10B981",
@@ -614,15 +597,11 @@ def fig7_ldi_heatmap(df, save_path):
     print(f"  Saved: {save_path}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 9. FULL STATS REPORT
-# ─────────────────────────────────────────────────────────────────────────────
 def run_all_stats(df, out_lines):
     W = out_lines.append
 
-    W("=" * 70)
     W("MST ANALYSIS — COMPLETE STATISTICAL RESULTS")
-    W("=" * 70)
     W("")
     W("CORRECTION AND EFFECT SIZE FRAMEWORK:")
     W("  Confirmatory H1-H4:")
@@ -640,15 +619,13 @@ def run_all_stats(df, out_lines):
     W("    H7: 3 interaction F-tests (one per condition) -> Holm across conditions")
     W("        Effect size: Cohen's f2 = delta_R2 / (1 - R2_full). Power post-hoc.")
 
-    # ── H1, H2, H3 per condition ─────────────────────────────────────────────
+    # H1, H2, H3 per condition
     for cond in list(CONDITIONS.keys()) + ["ALL"]:
         sub = df if cond == "ALL" else df[df["condition"] == cond]
         n   = len(sub)
         if n < 3:
             continue
-        W(f"\n{'─'*60}")
         W(f"CONDITION: {cond}  (N={n})")
-        W(f"{'─'*60}")
 
         # H1
         W("\n[H1] One-sample t-tests vs 0  (uncorrected; effects decisive)")
@@ -696,9 +673,7 @@ def run_all_stats(df, out_lines):
                       f"{r['t']:>8.3f} {r['p']:>9.4f} {thr:>8.4f} {'Yes' if rej else 'No':>7} {r['d']:>7.3f}")
 
     # H4
-    W(f"\n{'='*70}")
     W("[H4] BETWEEN-GROUP COMPARISONS  (Holm-Bonferroni, 6-comparison family)")
-    W(f"{'='*70}")
     W(f"{'Comparison':<35} {'Metric':<13} {'t':>7} {'df':>4} {'p_raw':>9} {'p_holm':>8} {'d':>7}  Result")
     all_bt = []
     for metric in ["REC_overall", "LDI_overall"]:
@@ -720,20 +695,16 @@ def run_all_stats(df, out_lines):
             W(f"{r['label']:<35} {r['metric']:<13} {r['t']:>7.3f} {r['df']:>4} "
               f"{r['p']:>9.4f} {ph:>8.4f} {r['d']:>7.3f}  {result}")
 
-    # ── EXPLORATORY ───────────────────────────────────────────────────────────
-    W(f"\n{'='*70}")
+    # EXPLORATORY
     W("EXPLORATORY HYPOTHESES  (uncorrected alpha=0.05 per test;")
     W("Holm applied within pairwise families as noted)")
-    W(f"{'='*70}")
 
-    # ── H5 ────────────────────────────────────────────────────────────────────
-    W(f"\n{'─'*60}")
+    # H5
     W("[H5 EXPLORATORY] Response Time by Event Position")
     W("Omnibus: Kruskal-Wallis. Effect: eta2 = (H - k + 1) / (n - k)")
     W("Pairwise: Mann-Whitney + r = U/sqrt(n1*n2). Holm within each condition.")
     W("Model: OLS RT ~ C(position). Effect: partial eta2, Cohen's f2.")
     W("Power: post-hoc for Kruskal-Wallis eta2 at observed N.")
-    W(f"{'─'*60}")
 
     for cond in CONDITIONS:
         sub = df[df["condition"] == cond]
@@ -811,13 +782,11 @@ def run_all_stats(df, out_lines):
             except Exception as e:
                 W(f"  OLS failed: {e}")
 
-    # ── H6 ────────────────────────────────────────────────────────────────────
-    W(f"\n{'─'*60}")
+    # H6
     W("[H6 EXPLORATORY] REC-LDI Within-Participant Correlation")
     W("Test: Pearson r + OLS LDI ~ REC per condition.")
     W("Correction: Holm across 3 conditions (same hypothesis tested 3 times).")
     W("Effect size: r (Pearson). Post-hoc power via Fisher z transformation.")
-    W(f"{'─'*60}")
 
     h6_results = []
     for cond in CONDITIONS:
@@ -856,14 +825,12 @@ def run_all_stats(df, out_lines):
         except Exception as e:
             W(f"  OLS failed: {e}")
 
-    # ── H7 ────────────────────────────────────────────────────────────────────
-    W(f"\n{'─'*60}")
+    # H7
     W("[H7 EXPLORATORY] LDI ~ Position x Lure Bin Interaction")
     W("Test: OLS LDI ~ bin_num * C(position) per condition.")
     W("Correction: Holm across 3 conditions (3 interaction F-tests, same hypothesis).")
     W("Effect size: Cohen's f2 = delta_R2 / (1 - R2_full).")
     W("Post-hoc power for interaction at observed N.")
-    W(f"{'─'*60}")
 
     h7_results = []
     h7_data    = {}
@@ -962,14 +929,10 @@ def run_all_stats(df, out_lines):
           f"(p_holm = {ph:.4f}). "
           f"{'Bin gradient differs by event position.' if int_sig else 'Bin gradient is consistent across positions.'}")
 
-    W(f"\n{'='*70}")
     W("END OF REPORT")
-    W(f"{'='*70}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # 10. MAIN
-# ─────────────────────────────────────────────────────────────────────────────
 def main():
     print("\nMST Analysis Pipeline — Complete Final Version\n")
     all_dfs = []
@@ -1005,7 +968,6 @@ def main():
     with open("mst_summary.txt", "w") as f:
         f.write(report)
     print("\nSaved: mst_summary.txt")
-    print("\n=== Done ===")
 
 
 if __name__ == "__main__":

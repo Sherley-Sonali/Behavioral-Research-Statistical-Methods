@@ -1,6 +1,4 @@
-======================================================================
 MST ANALYSIS — COMPLETE STATISTICAL RESULTS
-======================================================================
 
 CORRECTION AND EFFECT SIZE FRAMEWORK:
   Confirmatory H1-H4:
@@ -17,10 +15,7 @@ CORRECTION AND EFFECT SIZE FRAMEWORK:
         Effect size: r (Pearson). Power reported post-hoc.
     H7: 3 interaction F-tests (one per condition) -> Holm across conditions
         Effect size: Cohen's f2 = delta_R2 / (1 - R2_full). Power post-hoc.
-
-────────────────────────────────────────────────────────────
 CONDITION: item_only  (N=56)
-────────────────────────────────────────────────────────────
 
 [H1] One-sample t-tests vs 0  (uncorrected; effects decisive)
 Metric                N    Mean     SEM        t         p       d
@@ -47,10 +42,7 @@ Bin 2    56   0.342   0.025   13.927    0.0000   0.0100     Yes   1.861
 Bin 3    56   0.335   0.029   11.615    0.0000   0.0400     Yes   1.552
 Bin 4    56   0.369   0.027   13.548    0.0000   0.0200     Yes   1.810
 Bin 5    56   0.382   0.032   12.094    0.0000   0.0300     Yes   1.616
-
-────────────────────────────────────────────────────────────
 CONDITION: task_only  (N=53)
-────────────────────────────────────────────────────────────
 
 [H1] One-sample t-tests vs 0  (uncorrected; effects decisive)
 Metric                N    Mean     SEM        t         p       d
@@ -77,10 +69,7 @@ Bin 2    53   0.344   0.032   10.617    0.0000   0.0400     Yes   1.458
 Bin 3    53   0.396   0.030   13.079    0.0000   0.0200     Yes   1.797
 Bin 4    53   0.445   0.034   13.048    0.0000   0.0300     Yes   1.792
 Bin 5    53   0.471   0.029   16.521    0.0000   0.0100     Yes   2.269
-
-────────────────────────────────────────────────────────────
 CONDITION: both_item_task  (N=51)
-────────────────────────────────────────────────────────────
 
 [H1] One-sample t-tests vs 0  (uncorrected; effects decisive)
 Metric                N    Mean     SEM        t         p       d
@@ -107,10 +96,7 @@ Bin 2    51   0.278   0.032    8.736    0.0000   0.0300     Yes   1.223
 Bin 3    51   0.249   0.029    8.488    0.0000   0.0400     Yes   1.189
 Bin 4    51   0.319   0.030   10.730    0.0000   0.0200     Yes   1.503
 Bin 5    51   0.320   0.029   11.041    0.0000   0.0100     Yes   1.546
-
-────────────────────────────────────────────────────────────
 CONDITION: ALL  (N=160)
-────────────────────────────────────────────────────────────
 
 [H1] One-sample t-tests vs 0  (uncorrected; effects decisive)
 Metric                N    Mean     SEM        t         p       d
@@ -129,10 +115,7 @@ REC: mid-post              160   0.038   0.012    3.054    0.0026   0.0159   0.2
 LDI: pre-post              160   0.004   0.012    0.359    0.7198   1.0000   0.028
 LDI: pre-mid               160  -0.007   0.011   -0.572    0.5680   1.0000  -0.045
 LDI: mid-post              160   0.011   0.012    0.875    0.3828   1.0000   0.069
-
-======================================================================
 [H4] BETWEEN-GROUP COMPARISONS  (Holm-Bonferroni, 6-comparison family)
-======================================================================
 Comparison                          Metric              t   df     p_raw   p_holm       d  Result
 item_only vs task_only              REC_overall     1.211  107    0.2286   0.5847   0.232  ns
 item_only vs both_item_task         REC_overall     1.305  105    0.1949   0.5847   0.253  ns
@@ -140,19 +123,13 @@ task_only vs both_item_task         REC_overall    -0.037  102    0.9705   0.970
 item_only vs task_only              LDI_overall    -1.795  107    0.0755   0.3777  -0.344  ns
 item_only vs both_item_task         LDI_overall     1.465  105    0.1458   0.5831   0.284  ns
 task_only vs both_item_task         LDI_overall     3.095  102    0.0025   0.0153   0.607  **SIG**
-
-======================================================================
 EXPLORATORY HYPOTHESES  (uncorrected alpha=0.05 per test;
 Holm applied within pairwise families as noted)
-======================================================================
-
-────────────────────────────────────────────────────────────
 [H5 EXPLORATORY] Response Time by Event Position
 Omnibus: Kruskal-Wallis. Effect: eta2 = (H - k + 1) / (n - k)
 Pairwise: Mann-Whitney + r = U/sqrt(n1*n2). Holm within each condition.
 Model: OLS RT ~ C(position). Effect: partial eta2, Cohen's f2.
 Power: post-hoc for Kruskal-Wallis eta2 at observed N.
-────────────────────────────────────────────────────────────
 
   Condition: item_only  (N=56)
   Position      N    Median      Mean       SD
@@ -228,13 +205,10 @@ Power: post-hoc for Kruskal-Wallis eta2 at observed N.
   Intercept                                  1.7792   0.0905  19.665    0.0000
   C(position, Treatment('pre'))[T.mid]       0.0118   0.1280   0.092    0.9266
   C(position, Treatment('pre'))[T.post]      0.0441   0.1280   0.344    0.7310
-
-────────────────────────────────────────────────────────────
 [H6 EXPLORATORY] REC-LDI Within-Participant Correlation
 Test: Pearson r + OLS LDI ~ REC per condition.
 Correction: Holm across 3 conditions (same hypothesis tested 3 times).
 Effect size: r (Pearson). Post-hoc power via Fisher z transformation.
-────────────────────────────────────────────────────────────
 
   Condition: item_only  (N=56)
   Pearson r = 0.1527,  p_raw = 0.2613,  p_holm = 0.5227  ns
@@ -256,14 +230,11 @@ Effect size: r (Pearson). Post-hoc power via Fisher z transformation.
   Effect size: r = -0.1203  (small)
   Post-hoc power (alpha=0.05, N=51): 0.133
   OLS LDI ~ REC:  beta = -0.1527  (SE=0.1800, p=0.4003),  R2 = 0.0145
-
-────────────────────────────────────────────────────────────
 [H7 EXPLORATORY] LDI ~ Position x Lure Bin Interaction
 Test: OLS LDI ~ bin_num * C(position) per condition.
 Correction: Holm across 3 conditions (3 interaction F-tests, same hypothesis).
 Effect size: Cohen's f2 = delta_R2 / (1 - R2_full).
 Post-hoc power for interaction at observed N.
-────────────────────────────────────────────────────────────
 
   Condition: item_only  (N observations = 834)
   R2 main effects = 0.0328,  R2 with interaction = 0.0360
@@ -333,7 +304,4 @@ Post-hoc power for interaction at observed N.
   post         0.130   0.300   0.245   0.355   0.300
 
   CONCLUSION: No significant Position x Bin interaction in both_item_task (p_holm = 0.7766). Bin gradient is consistent across positions.
-
-======================================================================
 END OF REPORT
-======================================================================
