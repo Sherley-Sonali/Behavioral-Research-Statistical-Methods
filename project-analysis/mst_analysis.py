@@ -204,12 +204,14 @@ def compute_test_metrics(test_df):
             for resp in ['o', 's', 'n']:
                 row[f'{stype}_resp_{resp}'] = (sg['response'] == resp).sum() / max(len(sg), 1)
 
-        target_hr = row.get('target_resp_o', np.nan)
-        lure_cr   = row.get('lure_resp_s',   np.nan)
-        lure_fa   = row.get('lure_resp_o',   np.nan)
-        foil_fa   = row.get('foil_resp_o',   np.nan)
+        target_hr    = row.get('target_resp_o', np.nan)
+        lure_cr      = row.get('lure_resp_s',   np.nan)
+        foil_sim_rate = row.get('foil_resp_s',  np.nan)
+        foil_fa      = row.get('foil_resp_o',   np.nan)
 
-        row['LDI']         = lure_cr - lure_fa
+        # LDI = lure_similar_rate - foil_similar_rate (foil-corrected; Yassa et al.)
+        # Matches the formula used in mst_analysis_final.py
+        row['LDI']         = lure_cr - foil_sim_rate
         row['REC']         = target_hr - foil_fa
         row['overall_acc'] = g['correct'].mean()
 
